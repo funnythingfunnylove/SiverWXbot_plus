@@ -1,0 +1,45 @@
+<style>
+#tab-mcp .btn { padding: 9px 18px; border-radius: 6px; font-size: 13px; font-weight: 600; margin: 0 6px 8px 0; }
+#tab-mcp .btn-save { background: var(--primary); color: #fff; border: 1px solid var(--primary); }
+#tab-mcp .btn-load { background: var(--card); color: var(--card-fg); border: 1px solid var(--border); }
+#tab-mcp .btn:disabled { opacity: .55; cursor: wait; }
+#tab-mcp .btn:focus-visible { outline: 2px solid var(--primary); outline-offset: 3px; }
+#tab-mcp pre { max-width: 100%; white-space: pre-wrap; overflow-wrap: anywhere; }
+</style>
+<div class="config-panel" id="tab-mcp">
+  <div class="cfg-card">
+    <div class="cfg-card-header"><i class="bi bi-tools"></i><h5>MCP 对话工具</h5><span class="desc">让机器人查询外部信息、执行授权操作</span></div>
+    <p class="cfg-hint">使用「OpenAI API 格式兼容接口」且模型支持工具调用时生效。先添加服务、获取工具，再选择工具和授权会话。请使用本页的「保存总设置」和「保存服务」按钮；MCP 设置保存后下次对话生效，无需重启机器人。</p>
+    <div class="switch-row"><input class="form-check-input" type="checkbox" id="mcp-enabled"><label for="mcp-enabled">启用 MCP 对话工具</label></div>
+    <div class="row">
+      <div class="col-md-6 mb-3"><label class="cfg-label" for="mcp-rounds">每条消息最大工具轮数</label><input class="form-control" type="number" id="mcp-rounds" min="1" max="8" value="6"></div>
+      <div class="col-md-6 mb-3"><label class="cfg-label" for="mcp-total-timeout">每条消息最长等待（秒）</label><input class="form-control" type="number" id="mcp-total-timeout" min="20" max="300" value="120"></div>
+    </div>
+    <button type="button" class="btn btn-save" id="mcp-save-settings">保存总设置</button>
+    <p id="mcp-status" role="status" aria-live="polite" style="margin-top:12px;white-space:pre-wrap;"></p>
+  </div>
+  <div class="cfg-card">
+    <div class="cfg-card-header"><i class="bi bi-plug"></i><h5>已添加的服务</h5></div>
+    <div id="mcp-servers" class="mb-3">正在加载…</div>
+    <button type="button" class="btn btn-save" id="mcp-add">添加 MCP 服务</button>
+  </div>
+  <div class="cfg-card" id="mcp-editor" hidden>
+    <div class="cfg-card-header"><i class="bi bi-pencil"></i><h5 id="mcp-editor-title">添加 MCP 服务</h5></div>
+    <div class="mb-3"><label class="cfg-label" for="mcp-name">服务名称</label><input class="form-control" id="mcp-name" maxlength="80" placeholder="例如：项目进度查询"></div>
+    <div class="mb-3"><label class="cfg-label" for="mcp-url">MCP 地址（Streamable HTTP）</label><input class="form-control" type="url" id="mcp-url" placeholder="https://example.com/mcp"><div class="cfg-hint">填写 MCP 端点，不是普通网页或 REST API。可连接这台 Windows 电脑能访问的内网地址；本版不支持 stdio、旧 SSE 或交互式 OAuth 登录。</div></div>
+    <div class="mb-3"><label class="cfg-label" for="mcp-headers">认证请求头（JSON，可选）</label><textarea class="form-control" id="mcp-headers" rows="3" spellcheck="false" autocomplete="off" placeholder='{"Authorization":"Bearer your-token"}'></textarea><div class="cfg-hint" id="mcp-secret-hint">保存在本机配置中，不发送给模型，也不在列表中回显。</div><label><input type="checkbox" id="mcp-clear-headers"> 清除已保存的认证请求头</label></div>
+    <div class="mb-3"><label class="cfg-label" for="mcp-timeout">单次服务请求超时（秒）</label><input class="form-control" type="number" id="mcp-timeout" min="5" max="60" value="20"></div>
+    <button type="button" class="btn btn-load mb-3" id="mcp-test">测试连接并获取工具</button>
+    <p id="mcp-test-status" role="status" aria-live="polite" style="white-space:pre-wrap;"></p>
+    <div class="mb-3"><span class="cfg-label">允许调用的工具</span><p class="cfg-hint">连接测试只获取工具列表，不执行工具。勾选即授权机器人在下方会话中自动调用；写入、删除和通知类工具也会真实执行，请只开放你允许的操作。“只读”标记来自服务声明，仍需核对工具用途。</p><div id="mcp-tools" style="max-height:360px;overflow:auto;border:1px solid var(--border);border-radius:6px;padding:12px;"></div></div>
+    <div class="row">
+      <div class="col-md-6 mb-3"><label class="cfg-label" for="mcp-chats">允许使用的私聊（每行一个）</label><textarea class="form-control" id="mcp-chats" rows="4" placeholder="微信监听窗口名称，需完全一致"></textarea></div>
+      <div class="col-md-6 mb-3"><label class="cfg-label" for="mcp-groups">允许使用的群聊（每行一个）</label><textarea class="form-control" id="mcp-groups" rows="4" placeholder="群名，需完全一致"></textarea></div>
+    </div>
+    <div class="mb-3"><label class="cfg-label" for="mcp-senders">群内允许发起调用的人（每行一个）</label><textarea class="form-control" id="mcp-senders" rows="3" placeholder="与机器人日志中的发送人名称一致"></textarea><div class="cfg-hint">群名和发言人必须同时匹配。留空即不向任何群发言人开放。名称不是不可伪造的账号 ID，敏感操作建议只向可信私聊开放。会话仍需满足原有监听、@ 和 AI 回复开关。</div></div>
+    <div class="switch-row"><input class="form-check-input" type="checkbox" id="mcp-server-enabled"><label for="mcp-server-enabled">启用此服务</label></div>
+    <button type="button" class="btn btn-save" id="mcp-save-server">保存服务</button>
+    <button type="button" class="btn btn-load" id="mcp-cancel">取消</button>
+  </div>
+</div>
+<script defer src="{{ url_for('static', filename='mcp_panel.js') }}"></script>

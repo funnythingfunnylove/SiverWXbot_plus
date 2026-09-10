@@ -382,6 +382,10 @@ def login_required(f):
         return f(*args, **kwargs)
     return decorated_function
 
+from mcp_manager import get_mcp_manager
+from mcp_routes import register_mcp_routes
+register_mcp_routes(app, login_required, get_mcp_manager())
+
 def log_server(level, msg):
     timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     log_entry = {

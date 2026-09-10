@@ -57,6 +57,7 @@ is_wxautox = True  # 标识当前使用的是 wxautox Plus 版本
 import email_send
 import webhook_send
 from logger import log
+from mcp_manager import get_mcp_manager
 
 # ============================================================
 # wxautox 全局参数配置
@@ -1324,7 +1325,7 @@ class OpenAIAPI:
         return messages
 
     def chat(self, message, model=None, stream=False, prompt=None, history=None,
-             image_path: str = "", image_url: str = ""):
+             image_path: str = "", image_url: str = "", conversation=None):
         """
         调用 OpenAI 兼容接口获取 AI 回复。
 
@@ -1353,6 +1354,13 @@ class OpenAIAPI:
         else:
             user_content = message
         messages.append({"role": "user", "content": user_content})
+
+        # MCP is opt-in per conversation. Its loop never enters the automatic
+        # Responses fallback, which could replay a tool that already succeeded.
+        if conversation:
+            mcp_reply = get_mcp_manager().reply(self.client, model, messages, conversation)
+            if mcp_reply is not None:
+                return mcp_reply
 
         try:
             response = self.client.chat.completions.create(
@@ -3231,7 +3239,7 @@ class WXBot:
                         if message.type == 'image':
                             # 直接图片消息：content 已被替换为本地路径
                             rec_api = self._init_api_by_index(self.config.group_image_recognition_api)
-                            reply = rec_api.chat(
+                            reply = self._chat_with_context(rec_api, chat, message,
                                 f"{message.sender}: [这是 {message.sender} 单独发送的一条图片消息，请根据上下文语境分析这张图片和发送者发送的意图进行回复]",
                                 prompt=_effective_group_prompt,
                                 history=history,
@@ -3241,7 +3249,7 @@ class WXBot:
                             # 引用图片消息：拆分文字部分和图片路径
                             text_part, img_path = content_without_at.split('+引用的图片:', 1)
                             rec_api = self._init_api_by_index(self.config.group_image_recognition_api)
-                            reply = rec_api.chat(
+                            reply = self._chat_with_context(rec_api, chat, message,
                                 f"{message.sender}: {text_part.strip()}" if text_part.strip() else f"{message.sender}: [这是 {message.sender} 单独发送的一条图片消息，请根据上下文语境分析这张图片和发送者发送的意图进行回复]",
                                 prompt=_effective_group_prompt,
                                 history=history,
@@ -3250,13 +3258,13 @@ class WXBot:
                         else:
                             # 普通文字消息，走原有群组逻辑
                             group_api = self._get_group_api(chat.who)
-                            reply = group_api.chat(content_with_sender, prompt=_effective_group_prompt, history=history)
+                            reply = self._chat_with_context(group_api, chat, message, content_with_sender, prompt=_effective_group_prompt, history=history)
                     else:
                         # 识别关闭：图片消息静默跳过，文字正常
                         # if message.type == 'image' or '+引用的图片:' in content_without_at:
                             # return result
                         group_api = self._get_group_api(chat.who)
-                        reply = group_api.chat(content_with_sender, prompt=_effective_group_prompt, history=history)
+                        reply = self._chat_with_context(group_api, chat, message, content_with_sender, prompt=_effective_group_prompt, history=history)
                 except Exception as e:
                     print(traceback.format_exc())
                     log(level="ERROR", message=str(e) + "\n群组中调用AI回复错误！！")
@@ -3310,6 +3318,16 @@ class WXBot:
         # 私聊AI接口回复
         result = self.wx_send_ai(chat, message)
         return result
+
+    def _chat_with_context(self, api, chat, message, text, **kwargs):
+        """Pass trusted routing metadata separately from model/user text."""
+        if isinstance(api, OpenAIAPI):
+            kwargs['conversation'] = {
+                'chat': chat.who,
+                'sender': message.sender,
+                'is_group': chat.who in self.config.group or getattr(chat, 'chat_type', '') == 'group',
+            }
+        return api.chat(text, **kwargs)
 
     def _get_chat_api(self, user_name):
         """获取私聊用户对应的 AI 接口实例（白名单模式查 chat_api_map，否则用默认接口）"""
@@ -3539,7 +3557,7 @@ class WXBot:
                     if message.type == 'image':
                         # 直接图片消息：content 已被替换为本地路径（图片识别优先使用图片识别接口）
                         rec_api = self._init_api_by_index(self.config.chat_image_recognition_api)
-                        reply = rec_api.chat(
+                        reply = self._chat_with_context(rec_api, chat, message,
                             "[这是单独发送的一条图片消息，请根据上下文语境分析这张图片和发送者发送的意图进行回复]",
                             prompt=_effective_prompt,
                             history=history,
@@ -3549,7 +3567,7 @@ class WXBot:
                         # 引用图片消息：拆分文字部分和图片路径
                         text_part, img_path = message.content.split('+引用的图片:', 1)
                         rec_api = self._init_api_by_index(self.config.chat_image_recognition_api)
-                        reply = rec_api.chat(
+                        reply = self._chat_with_context(rec_api, chat, message,
                             text_part.strip() or "[这是单独发送的一条图片消息，请根据上下文语境分析这张图片和发送者发送的意图进行回复]",
                             prompt=_effective_prompt,
                             history=history,
@@ -3557,12 +3575,12 @@ class WXBot:
                         )
                     else:
                         # 普通文字消息：使用用户专属接口和 prompt
-                        reply = self._get_chat_api(chat.who).chat(message.content, prompt=_effective_prompt, history=history)
+                        reply = self._chat_with_context(self._get_chat_api(chat.who), chat, message, message.content, prompt=_effective_prompt, history=history)
                 else:
                     # 识别关闭：图片消息静默跳过，文字消息正常
                     # if message.type == 'image' or '+引用的图片:' in message.content:
                         # return True
-                    reply = self._get_chat_api(chat.who).chat(message.content, prompt=_effective_prompt, history=history)
+                    reply = self._chat_with_context(self._get_chat_api(chat.who), chat, message, message.content, prompt=_effective_prompt, history=history)
         except Exception as e:
             print(traceback.format_exc())
             log(level="ERROR", message=str(e) + "\nAPI返回错误，请稍后再试")

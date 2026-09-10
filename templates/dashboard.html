@@ -753,6 +753,7 @@ body.mobile-nav-open { overflow: hidden; }
   <div class="nav-item"><a class="nav-link" data-tab="tab-siver-panel"><i class="bi bi-router"></i> 远程访问服务</a></div>
   <div class="nav-divider"></div>
   <div class="nav-item"><a class="nav-link" data-tab="tab-api"><i class="bi bi-cloud"></i> 模型配置</a></div>
+  <div class="nav-item"><a class="nav-link" data-tab="tab-mcp"><i class="bi bi-tools"></i> MCP 工具</a></div>
   <div class="nav-item"><a class="nav-link" data-tab="tab-prompt"><i class="bi bi-chat-square-text"></i> Prompt</a></div>
   <div class="nav-item"><a class="nav-link" data-tab="tab-admin"><i class="bi bi-shield-lock"></i> 管理员</a></div>
   <div class="nav-divider"></div>
@@ -2288,6 +2289,8 @@ body.mobile-nav-open { overflow: hidden; }
   </div>
 
 
+
+  {% include 'mcp_panel.html' %}
 
   <!-- ===== Tab: Webhook ===== -->
   <div class="config-panel" id="tab-webhook">
