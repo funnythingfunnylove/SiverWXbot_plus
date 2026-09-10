@@ -181,6 +181,21 @@ def test_error_redaction():
     assert "secret" not in safe_error(error)
 
 
+def test_discovery_403_reports_mcp_stage(store):
+    import httpx
+    @asynccontextmanager
+    async def denied(server):
+        raise httpx.HTTPStatusError('private response', request=httpx.Request('POST', 'https://example.org/mcp'), response=httpx.Response(403))
+        yield
+    manager = MCPManager(store, connector=denied)
+    try:
+        with pytest.raises(MCPError, match='MCP 连接/工具发现阶段.*403') as caught:
+            manager.test({'timeout': 5})
+        assert 'private response' not in str(caught.value)
+    finally:
+        manager.close()
+
+
 def test_panel_routes_auth_crud_test_and_csrf(manager, live_mcp):
     app = Flask(__name__)
     app.secret_key = "fixture-only"

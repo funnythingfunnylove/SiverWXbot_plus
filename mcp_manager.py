@@ -19,6 +19,10 @@ class MCPError(Exception):
     pass
 
 
+def stage_error(stage, exc):
+    return MCPError(f"{stage}：{safe_error(exc)}")
+
+
 def safe_error(exc):
     """Never expose exception bodies, URLs, tokens or model request contents."""
     if isinstance(exc, MCPError):
@@ -137,10 +141,13 @@ class MCPManager:
 
     def test(self, server):
         async def discover():
-            async with self.connector(server) as session:
-                tools = await discover_tools(session)
-                return [{"name": t.name, "description": t.description or "", "input_schema": t.inputSchema,
-                         "read_only": bool(t.annotations and t.annotations.readOnlyHint)} for t in tools]
+            try:
+                async with self.connector(server) as session:
+                    tools = await discover_tools(session)
+                    return [{"name": t.name, "description": t.description or "", "input_schema": t.inputSchema,
+                             "read_only": bool(t.annotations and t.annotations.readOnlyHint)} for t in tools]
+            except Exception as exc:
+                raise stage_error("MCP 连接/工具发现阶段", exc) from exc
         return self.submit(discover, server["timeout"])
 
     def reply(self, client, model, messages, context):
@@ -150,6 +157,8 @@ class MCPManager:
         async def run():
             from openai import AsyncOpenAI
             async with AsyncOpenAI(api_key=client.api_key, base_url=str(client.base_url),
+                                   default_headers=dict(client.default_headers),
+                                   organization=client.organization, project=client.project,
                                    timeout=30, max_retries=0) as ai:
                 return await self.converse(ai.chat.completions.create, model, messages, context, config, servers)
         try:
@@ -181,8 +190,13 @@ class MCPManager:
             # Fail explicitly if an enabled, authorized server cannot be discovered.
             # Silently dropping it would encourage an answer without required data.
             for server in servers:
-                session = await stack.enter_async_context(self.connector(server))
-                for tool in await discover_tools(session):
+                try:
+                    session = await stack.enter_async_context(self.connector(server))
+                    discovered = await discover_tools(session)
+                except Exception as exc:
+                    raise stage_error("MCP 连接/工具发现阶段", exc) from exc
+                self.log("INFO", f"MCP 工具发现成功：{server['name']}，共 {len(discovered)} 个工具")
+                for tool in discovered:
                     if tool.name not in server["allowed_tools"]:
                         continue
                     Draft202012Validator.check_schema(tool.inputSchema)
@@ -201,8 +215,11 @@ class MCPManager:
             completed = {}
             for round_index in range(config["max_rounds"] + 1):
                 final_round = round_index == config["max_rounds"] or calls_used >= 12
-                response = await create(model=model, messages=transcript, tools=definitions,
-                                        tool_choice="none" if final_round else "auto", stream=False)
+                try:
+                    response = await create(model=model, messages=transcript, tools=definitions,
+                                            tool_choice="none" if final_round else "auto", stream=False)
+                except Exception as exc:
+                    raise stage_error("模型请求阶段", exc) from exc
                 if not response.choices:
                     raise MCPError("模型未返回消息，请确认接口支持工具调用")
                 message = response.choices[0].message
@@ -247,8 +264,9 @@ class MCPManager:
                                         self.log("INFO", f"MCP 工具返回 {'失败' if result.isError else '成功'}：{server['name']} / {tool.name}")
                                     except Exception as exc:
                                         failed_servers.add(server["id"])
-                                        self.log("WARNING", safe_error(exc))
-                                        result_text = json.dumps({"is_error": True, "content": safe_error(exc)}, ensure_ascii=False)
+                                        error = str(stage_error("MCP 工具执行阶段", exc))
+                                        self.log("WARNING", error)
+                                        result_text = json.dumps({"is_error": True, "content": error}, ensure_ascii=False)
                                     completed[signature] = result_text
                     transcript.append({"role": "tool", "tool_call_id": call.id, "content": result_text})
             raise MCPError("工具调用轮数已用尽")

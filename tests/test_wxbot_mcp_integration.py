@@ -29,10 +29,13 @@ def modules(tmp_path_factory):
 @pytest.fixture
 def live_model():
     requests = []
-    state = SimpleNamespace(fail_after_tool=False)
+    state = SimpleNamespace(fail_after_tool=False, require_compatible_headers=False, deny=False)
     async def completion(request):
         payload = await request.json()
         requests.append(payload)
+        if state.deny or (state.require_compatible_headers and
+                          (request.headers.get('user-agent') != 'Mozilla/5.0' or request.headers.get('accept') != '*/*')):
+            return JSONResponse({'error': {'message': 'fixture gateway denied', 'type': 'permission_error'}}, status_code=403)
         outputs = [m for m in payload["messages"] if m["role"] == "tool"]
         if not payload.get("tools"):
             message = {"role": "assistant", "content": "普通聊天回复"}
@@ -123,5 +126,24 @@ def test_model_failure_after_execution_never_replays(modules, manager, configure
         assert "未完成" in text and "500" in text
         assert live_mcp.calls == [(2, 3)]
         assert len(live_model.requests) == 2  # SDK retries are disabled in the loop.
+    finally:
+        api.client.close()
+
+
+@pytest.mark.parametrize('deny', [False, True])
+def test_mcp_model_headers_and_403_stage(modules, manager, configured, live_mcp, live_model, monkeypatch, deny):
+    core, _ = modules
+    monkeypatch.setattr(core, 'get_mcp_manager', lambda: manager)
+    live_model.require_compatible_headers = True
+    live_model.deny = deny
+    api = core.OpenAIAPI(SimpleNamespace(model1='fixture', api_key='fixture-only', base_url=live_model.url, prompt='Use tools'))
+    try:
+        text = api.chat('2+3?', conversation={'chat': 'Alice', 'sender': 'Alice', 'is_group': False})
+        if deny:
+            assert '模型请求阶段' in text and '403' in text
+            assert live_mcp.calls == []
+        else:
+            assert text == '查询结果：2 + 3 = 5'
+            assert live_mcp.calls == [(2, 3)]
     finally:
         api.client.close()
