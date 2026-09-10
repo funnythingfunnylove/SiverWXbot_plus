@@ -3183,6 +3183,7 @@ class WXBot:
             kwargs['conversation'] = {
                 'chat': chat.who,
                 'sender': message.sender,
+                'mentioned': bool(self.config.AtMe and self.config.AtMe in message.content),
                 'is_group': chat.who in self.config.group or getattr(chat, 'chat_type', '') == 'group',
             }
         return api.chat(text, **kwargs)

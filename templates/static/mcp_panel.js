@@ -62,7 +62,7 @@
     el('mcp-editor').hidden = false;
     el('mcp-editor-title').textContent = editingId ? '编辑 MCP 服务' : '添加 MCP 服务';
     for (const [field, value] of Object.entries({name: server.name || '', url: server.url || '', headers: '', timeout: server.timeout || 20,
-      chats: (server.allowed_chats || []).join('\n'), groups: (server.allowed_groups || []).join('\n'), senders: (server.group_senders || []).join('\n')})) el(`mcp-${field}`).value = value;
+      chats: (server.allowed_chats || []).join('\n'), groups: (server.allowed_groups || []).join('\n')})) el(`mcp-${field}`).value = value;
     el('mcp-clear-headers').checked = false;
     el('mcp-server-enabled').checked = !!server.enabled;
     el('mcp-secret-hint').textContent = server.has_headers ? '已保存认证请求头。留空保留，输入新 JSON 替换，或勾选清除。' : '尚未保存认证请求头；没有认证要求可留空。';
@@ -73,7 +73,7 @@
   function draft() {
     const result = {id: editingId, name: el('mcp-name').value, url: el('mcp-url').value,
       timeout: Number(el('mcp-timeout').value), enabled: el('mcp-server-enabled').checked,
-      allowed_tools: selectedTools(), allowed_chats: lines('mcp-chats'), allowed_groups: lines('mcp-groups'), group_senders: lines('mcp-senders')};
+      allowed_tools: selectedTools(), allowed_chats: lines('mcp-chats'), allowed_groups: lines('mcp-groups')};
     const text = el('mcp-headers').value.trim();
     if (el('mcp-clear-headers').checked) result.headers = {};
     else if (text) {
@@ -124,7 +124,7 @@
   });
   el('mcp-save-server').onclick = () => action(async () => {
     const data = draft();
-    if (data.enabled && (!data.allowed_tools.length || !(data.allowed_chats.length || (data.allowed_groups.length && data.group_senders.length)))) {
+    if (data.enabled && (!data.allowed_tools.length || !(data.allowed_chats.length || data.allowed_groups.length))) {
       throw new Error('启用服务前，请选择工具并填写至少一个完整的授权会话。');
     }
     await request('servers', 'POST', data);

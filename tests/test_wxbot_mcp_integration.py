@@ -78,6 +78,7 @@ def test_bot_message_to_mcp_to_wechat_send(modules, manager, configured, live_mc
     config.listen_list = ["Alice", "Bob"]
     config.group = ["Project"]
     config.group_switch = True
+    config.AtMe = "@机器人"
     config.group_reply_at_msg = False
     config.group_reply_quote = False
     config.api_sdk = core.OPENAI_SDK_NAME
@@ -90,7 +91,7 @@ def test_bot_message_to_mcp_to_wechat_send(modules, manager, configured, live_mc
     bot.api = core.OpenAIAPI(config)
     sent = []
     chat = SimpleNamespace(who="Project" if is_group else "Alice", chat_type="group" if is_group else "friend", SendMsg=lambda msg, **kwargs: sent.append(msg) or True)
-    message = SimpleNamespace(sender="Alice", content="计算2加3", type="text", attr="friend")
+    message = SimpleNamespace(sender="任意群成员" if is_group else "Alice", content="@机器人 计算2加3" if is_group else "计算2加3", type="text", attr="friend")
     try:
         bot.process_message(chat, message)
         assert sent == ["查询结果：2 + 3 = 5"]
@@ -98,6 +99,7 @@ def test_bot_message_to_mcp_to_wechat_send(modules, manager, configured, live_mc
         assert len(live_model.requests) == 2
         # Unauthorized sender/chat retains the original model path without tools.
         message.sender = "Bob"
+        message.content = "没有提及机器人的普通消息"
         if not is_group:
             chat.who = "Bob"
         bot.process_message(chat, message)

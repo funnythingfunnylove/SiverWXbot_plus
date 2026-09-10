@@ -56,8 +56,10 @@ def test_invalid_config_rejected(store, change):
 def test_permission_defaults_and_groups(configured):
     assert permits(configured, CONTEXT)
     assert not permits(configured, {**CONTEXT, "chat": "Mallory"})
-    assert not permits(configured, {"chat": "Project", "is_group": True, "sender": "Mallory"})
-    assert permits(configured, {"chat": "Project", "is_group": True, "sender": "Alice"})
+    assert permits(configured, {"chat": "Project", "is_group": True, "sender": "Mallory", "mentioned": True})
+    assert not permits(configured, {"chat": "Project", "is_group": True, "sender": "Alice", "mentioned": False})
+    assert not permits(configured, {"chat": "Other", "is_group": True, "sender": "Alice", "mentioned": True})
+    assert permits(configured, {"chat": "Project", "is_group": True, "sender": "Alice", "mentioned": True})
     assert not permits({**configured, "enabled": False}, CONTEXT)
 
 

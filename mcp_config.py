@@ -67,7 +67,6 @@ def validate_server(data, previous=None):
         "allowed_tools": string_list(data.get("allowed_tools", []), "工具名单"),
         "allowed_chats": string_list(data.get("allowed_chats", []), "私聊名单"),
         "allowed_groups": string_list(data.get("allowed_groups", []), "群聊名单"),
-        "group_senders": string_list(data.get("group_senders", []), "群发言人名单"),
     }
     return result
 
@@ -77,7 +76,7 @@ def permits(server, context):
         return False
     if context.get("is_group"):
         return (context.get("chat") in server.get("allowed_groups", [])
-                and context.get("sender") in server.get("group_senders", []))
+                and context.get("mentioned") is True)
     return context.get("chat") in server.get("allowed_chats", [])
 
 

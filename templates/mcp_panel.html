@@ -36,7 +36,7 @@
       <div class="col-md-6 mb-3"><label class="cfg-label" for="mcp-chats">允许使用的私聊（每行一个）</label><textarea class="form-control" id="mcp-chats" rows="4" placeholder="微信监听窗口名称，需完全一致"></textarea></div>
       <div class="col-md-6 mb-3"><label class="cfg-label" for="mcp-groups">允许使用的群聊（每行一个）</label><textarea class="form-control" id="mcp-groups" rows="4" placeholder="群名，需完全一致"></textarea></div>
     </div>
-    <div class="mb-3"><label class="cfg-label" for="mcp-senders">群内允许发起调用的人（每行一个）</label><textarea class="form-control" id="mcp-senders" rows="3" placeholder="与机器人日志中的发送人名称一致"></textarea><div class="cfg-hint">群名和发言人必须同时匹配。留空即不向任何群发言人开放。名称不是不可伪造的账号 ID，敏感操作建议只向可信私聊开放。会话仍需满足原有监听、@ 和 AI 回复开关。</div></div>
+    <p class="cfg-hint">添加授权群后，群内所有成员 @ 机器人即可使用所选工具，无需添加人员名单。未 @ 的群消息不调用 MCP；仍需开启该群的监听与 AI 回复。</p>
     <div class="switch-row"><input class="form-check-input" type="checkbox" id="mcp-server-enabled"><label for="mcp-server-enabled">启用此服务</label></div>
     <button type="button" class="btn btn-save" id="mcp-save-server">保存服务</button>
     <button type="button" class="btn btn-load" id="mcp-cancel">取消</button>
