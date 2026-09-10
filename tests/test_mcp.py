@@ -7,7 +7,7 @@ from types import SimpleNamespace
 import pytest
 from flask import Flask, jsonify, session
 from mcp.types import CallToolResult, TextContent, Tool, ListToolsResult
-from openai.types.chat import ChatCompletionMessage
+from openai.types.responses import ResponseFunctionToolCall
 
 from mcp_config import permits
 from mcp_manager import MCPManager, MCPError, discover_tools, format_result, safe_error, tool_name
@@ -18,11 +18,11 @@ CONTEXT = {"chat": "Alice", "sender": "Alice", "is_group": False}
 
 
 def response(text=None, calls=None):
-    return SimpleNamespace(choices=[SimpleNamespace(message=ChatCompletionMessage(role="assistant", content=text, tool_calls=calls))])
+    return SimpleNamespace(status="completed", output=[ResponseFunctionToolCall(**c) for c in calls] if calls else [SimpleNamespace(type="message", content=[SimpleNamespace(type="output_text", text=text)])])
 
 
 def call(alias, args, identifier="call_1"):
-    return {"id": identifier, "type": "function", "function": {"name": alias, "arguments": json.dumps(args)}}
+    return {"id": "fc_" + identifier, "call_id": identifier, "type": "function_call", "name": alias, "arguments": json.dumps(args)}
 
 
 def test_config_secret_preservation_and_atomic_update(store):
@@ -81,9 +81,9 @@ def test_real_tool_loop_and_duplicate_suppression(manager, configured, live_mcp)
         requests.append(kwargs)
         if len(requests) <= 2:
             return response(calls=[call(alias, {"a": 2, "b": 3}, f"call_{len(requests)}")])
-        outputs = [m for m in kwargs["messages"] if m["role"] == "tool"]
+        outputs = [m for m in kwargs["input"] if m.get("type") == "function_call_output"]
         assert len(outputs) == 2
-        assert "5" in outputs[-1]["content"]
+        assert "5" in outputs[-1]["output"]
         return response("结果是 5")
     assert run_conversation(manager, create) == "结果是 5"
     assert live_mcp.calls == [(2, 3)]
@@ -100,7 +100,7 @@ def test_unauthorized_or_invalid_tool_never_executes(manager, store, configured,
             if kind == "revoked":
                 store.settings({"enabled": False})
             return response(calls=[call("unlisted" if kind == "unlisted" else tool_name(configured["id"], "add"), {"a": "bad" if kind == "invalid" else 2, "b": 3})])
-        output = json.loads(kwargs["messages"][-1]["content"])
+        output = json.loads(kwargs["input"][-1]["output"])
         assert output["is_error"]
         return response("不能执行")
     assert run_conversation(manager, create) == "不能执行"
@@ -118,7 +118,7 @@ def test_tool_error_blocks_further_server_calls(manager, configured, live_mcp):
         index += 1
         if index == 1:
             return response(calls=[call(tool_name(configured["id"], "fail"), {}), call(tool_name(configured["id"], "add"), {"a": 2, "b": 3}, "call_2")])
-        assert all(json.loads(m["content"])["is_error"] for m in kwargs["messages"] if m["role"] == "tool")
+        assert all(json.loads(m["output"])["is_error"] for m in kwargs["input"] if m.get("type") == "function_call_output")
         return response("工具执行失败，未执行后续操作")
     assert "失败" in run_conversation(manager, create)
     assert live_mcp.calls == []

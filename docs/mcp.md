@@ -18,10 +18,10 @@ python web_server.py
 
 - 远程 **Streamable HTTP** MCP，可访问 Windows 所在网络的本地、内网或公网服务。
 - 无认证，或通过自定义 HTTP 请求头传递 Bearer/API Key 等认证。
-- **OpenAI API 格式兼容接口**的 Chat Completions 工具调用。模型与服务端必须支持 `tools`、`tool_calls`、`tool` 消息及 `tool_choice`。
+- **OpenAI API 格式兼容接口**仅使用 Responses 协议（`/responses`）。模型与服务端必须支持 `tools`、`function_call`、`function_call_output` 及 `tool_choice`。普通聊天、图片识别、面板测试及 MCP 对话均不会调用 Chat Completions，也不会自动切换协议。
 - 私聊、群聊及原有图片识别分支；图片分支选用的接口也必须支持上述工具调用能力。
 
-不支持 stdio 进程型服务、旧 HTTP SSE 传输、交互式 OAuth 登录、只提供 Responses API 的模型服务，以及通过本项目的 Dify/Coze/DusAPI 适配器调用 MCP。MCP 工具的图片、音频等非文本返回会提示未转发；文本与结构化 JSON 可供模型使用。
+不支持 stdio 进程型服务、旧 HTTP SSE 传输、交互式 OAuth 登录、只提供 Chat Completions 的模型服务，以及通过本项目的 Dify/Coze/DusAPI 适配器调用 MCP。MCP 工具的图片、音频等非文本返回会提示未转发；文本与结构化 JSON 可供模型使用。
 
 ## 添加服务并授权
 
@@ -67,7 +67,7 @@ python web_server.py
 | HTTP 401/403 | 核对服务凭据和认证方式；本版不会弹出 OAuth 登录 |
 | HTTP 404、返回 HTML 或解析失败 | 核对填写的是 MCP 端点，以及是否为 Streamable HTTP |
 | 连接成功但对话没有调用工具 | 核对总开关、服务开关、工具选择、会话名称、群发言人及原有 AI 回复条件 |
-| 模型提示不支持工具/HTTP 400 | 确认 Chat Completions 接口和模型支持工具消息，换成支持工具的模型 |
+| 模型提示不支持工具/HTTP 400 | 确认 Responses 接口和模型支持工具调用，换成支持工具的模型 |
 | 授权工具不存在 | 重新测试连接，核对服务是否更改工具名称，调整选择后保存 |
 | 超时或工具失败 | 查看服务端实际状态；修改操作可能已执行，先核对再决定是否重试 |
 | 缺少 MCP 依赖 | 用运行机器人的同一个 Python 执行 `python -m pip install -r requirements.txt`，然后重启进程 |
@@ -76,7 +76,7 @@ python web_server.py
 
 默认每条消息最多 6 轮工具调用、总等待 120 秒；面板可调整到 1～8 轮、20～300 秒。每个服务单次超时 5～60 秒；每条消息最多执行 12 个调用；最多 4 个同时进行的 MCP 请求。达到限制后会提示，不会无限执行。
 
-同一轮对话中相同工具和参数只执行一次，其余调用复用结果。工具失败后本轮停止继续调用该服务。工具循环禁用模型 SDK 自动重试，也不进入旧的 Responses 自动降级，以免重复执行操作。这些措施不提供跨消息/进程重启后的“恰好执行一次”保证；写入工具仍应在服务端实现幂等性。
+同一轮对话中相同工具和参数只执行一次，其余调用复用结果。工具失败后本轮停止继续调用该服务。工具循环禁用模型 SDK 自动重试，仅使用 Responses 协议且不做协议降级，以免重复执行操作。这些措施不提供跨消息/进程重启后的“恰好执行一次”保证；写入工具仍应在服务端实现幂等性。
 
 单条工具返回供模型使用的正文最多 12,000 字符，截断状态会明确传入。工具调用轨迹只保存在本轮内存中；后续轮次继续使用项目原有聊天记忆，不自动重放上一轮工具调用。
 
@@ -113,3 +113,5 @@ python -m pytest tests -q
 `python tests/panel_preview.py` 可启动临时配置的真实 Flask 面板和本地加法 MCP 服务，用于浏览器检查；控制台打印 MCP 端点。此预览使用测试替身，不能启动真实微信机器人，也不会访问你的正式配置。
 
 本功能使用 [MCP Python SDK v1 客户端接口](https://py.sdk.modelcontextprotocol.io/v1/)，依赖限定 `<2`，避免 SDK 大版本变更影响 Windows 更新。
+
+模型地址填写 API 基址，例如 `https://api.example.com/codex/v1`，SDK 自动追加 `/responses`。不要填写完整的 `/responses` 或 `/chat/completions` 地址。Responses 请求采用非流式、`store=false`；工具循环保留返回的推理项及加密推理上下文，并用 `call_id` 配对工具结果。

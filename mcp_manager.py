@@ -87,6 +87,16 @@ def format_result(result, limit=12000):
     return json.dumps({"is_error": result.isError, "content": text[:limit], "truncated": truncated}, ensure_ascii=False)
 
 
+def response_text(response):
+    """Only expose completed assistant output, never reasoning items."""
+    if getattr(response, "status", None) != "completed":
+        return ""
+    return "\n".join(
+        part.text for item in (response.output or []) if item.type == "message"
+        for part in item.content if part.type == "output_text"
+    ).strip()
+
+
 class MCPManager:
     def __init__(self, store, log=None, connector=connect_server):
         self.store, self.log, self.connector = store, log or (lambda *_: None), connector
@@ -160,12 +170,12 @@ class MCPManager:
                                    default_headers=dict(client.default_headers),
                                    organization=client.organization, project=client.project,
                                    timeout=30, max_retries=0) as ai:
-                return await self.converse(ai.chat.completions.create, model, messages, context, config, servers)
+                return await self.converse(ai.responses.create, model, messages, context, config, servers)
         try:
             return self.submit(run, config["total_timeout"])
         except Exception as exc:
             self.log("WARNING", safe_error(exc))
-            # A plain, explicit reply prevents legacy fallback from replaying tools.
+            # Return an explicit failure without replaying tools or switching protocols.
             return "本次工具对话未完成。" + safe_error(exc) + "。如涉及修改，请先核对实际结果。"
 
     def _still_allowed(self, original, name, context):
@@ -202,10 +212,10 @@ class MCPManager:
                     Draft202012Validator.check_schema(tool.inputSchema)
                     alias = tool_name(server["id"], tool.name)
                     routes[alias] = (server, session, tool)
-                    definitions.append({"type": "function", "function": {
+                    definitions.append({"type": "function", "strict": False,
                         "name": alias, "description": f"{server['name']} / {tool.name}: {tool.description or ''}"[:2000],
                         "parameters": tool.inputSchema,
-                    }})
+                    })
             if not definitions:
                 raise MCPError("授权工具在服务中不存在，请在面板重新获取并选择工具")
             if len(definitions) > 128:
@@ -216,32 +226,33 @@ class MCPManager:
             for round_index in range(config["max_rounds"] + 1):
                 final_round = round_index == config["max_rounds"] or calls_used >= 12
                 try:
-                    response = await create(model=model, messages=transcript, tools=definitions,
+                    response = await create(model=model, input=transcript, tools=definitions, store=False,
+                                            include=["reasoning.encrypted_content"],
                                             tool_choice="none" if final_round else "auto", stream=False)
                 except Exception as exc:
                     raise stage_error("模型请求阶段", exc) from exc
-                if not response.choices:
-                    raise MCPError("模型未返回消息，请确认接口支持工具调用")
-                message = response.choices[0].message
-                calls = message.tool_calls or []
+                if getattr(response, "status", None) != "completed":
+                    raise MCPError("模型 Responses 返回未完成，停止本轮工具调用")
+                calls = [item for item in response.output if item.type == "function_call"]
                 if not calls:
-                    if message.content:
-                        return message.content
+                    text = response_text(response)
+                    if text:
+                        return text
                     raise MCPError("模型返回空消息，请确认接口支持工具调用")
                 if final_round:
                     return "本次工具调用已达到上限，请缩小查询范围；已执行的操作请先核对结果。"
-                transcript.append(message.model_dump(exclude_none=True))
+                transcript.extend(item.model_dump(exclude_none=True) for item in response.output)
                 for call in calls:
                     calls_used += 1
-                    route = routes.get(call.function.name)
+                    route = routes.get(call.name)
                     result_text = json.dumps({"is_error": True, "content": "工具未授权或调用次数达到上限"}, ensure_ascii=False)
                     if route and calls_used <= 12:
                         server, session, tool = route
                         if self._still_allowed(server, tool.name, context):
                             try:
-                                if len(call.function.arguments) > 64000:
+                                if len(call.arguments) > 64000:
                                     raise ValueError("arguments too large")
-                                arguments = json.loads(call.function.arguments)
+                                arguments = json.loads(call.arguments)
                                 if not isinstance(arguments, dict):
                                     raise ValueError("arguments must be an object")
                                 # External $refs must not trigger arbitrary network reads.
@@ -249,7 +260,7 @@ class MCPManager:
                             except Exception:
                                 result_text = json.dumps({"is_error": True, "content": "参数不符合工具 JSON Schema，请修正参数"}, ensure_ascii=False)
                             else:
-                                signature = (call.function.name, json.dumps(arguments, sort_keys=True, ensure_ascii=False))
+                                signature = (call.name, json.dumps(arguments, sort_keys=True, ensure_ascii=False))
                                 if signature in completed:
                                     result_text = completed[signature]
                                 elif server["id"] in failed_servers:
@@ -268,7 +279,7 @@ class MCPManager:
                                         self.log("WARNING", error)
                                         result_text = json.dumps({"is_error": True, "content": error}, ensure_ascii=False)
                                     completed[signature] = result_text
-                    transcript.append({"role": "tool", "tool_call_id": call.id, "content": result_text})
+                    transcript.append({"type": "function_call_output", "call_id": call.call_id, "output": result_text})
             raise MCPError("工具调用轮数已用尽")
 
 

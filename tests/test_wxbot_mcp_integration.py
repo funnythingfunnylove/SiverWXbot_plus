@@ -32,24 +32,34 @@ def live_model():
     state = SimpleNamespace(fail_after_tool=False, require_compatible_headers=False, deny=False)
     async def completion(request):
         payload = await request.json()
+        assert 'messages' not in payload
+        assert payload['store'] is False and payload['stream'] is False
         requests.append(payload)
         if state.deny or (state.require_compatible_headers and
                           (request.headers.get('user-agent') != 'Mozilla/5.0' or request.headers.get('accept') != '*/*')):
             return JSONResponse({'error': {'message': 'fixture gateway denied', 'type': 'permission_error'}}, status_code=403)
-        outputs = [m for m in payload["messages"] if m["role"] == "tool"]
+        outputs = [m for m in payload["input"] if m.get("type") == "function_call_output"]
         if not payload.get("tools"):
             message = {"role": "assistant", "content": "普通聊天回复"}
         elif not outputs:
-            name = next(t["function"]["name"] for t in payload["tools"] if " / add:" in t["function"]["description"])
-            message = {"role": "assistant", "content": None, "tool_calls": [{"id": "addition", "type": "function", "function": {"name": name, "arguments": '{"a":2,"b":3}'}}]}
+            name = next(t["name"] for t in payload["tools"] if " / add:" in t["description"])
+            message = {"id": "fc_addition", "call_id": "addition", "type": "function_call", "name": name, "arguments": '{"a":2,"b":3}'}
         else:
             if state.fail_after_tool:
                 return JSONResponse({"error": {"message": "fixture failure", "type": "server_error"}}, status_code=500)
-            assert "5" in outputs[-1]["content"]
+            assert "5" in outputs[-1]["output"]
+            assert any(item.get('type') == 'reasoning' and item.get('encrypted_content') == 'fixture_encrypted' for item in payload['input'])
+            assert outputs[-1]['call_id'] == 'addition'
             message = {"role": "assistant", "content": "查询结果：2 + 3 = 5"}
-        return JSONResponse({"id": "fixture-completion", "object": "chat.completion", "created": 1, "model": "fixture",
-                             "choices": [{"index": 0, "finish_reason": "tool_calls" if message.get("tool_calls") else "stop", "message": message}]})
-    app = Starlette(routes=[Route("/v1/chat/completions", completion, methods=["POST"])])
+        if message.get("type") != "function_call":
+            message = {"type": "message", "id": "msg_fixture", "role": "assistant", "status": "completed",
+                       "content": [{"type": "output_text", "text": message["content"], "annotations": []}]}
+        output = [message]
+        if message['type'] == 'function_call':
+            output.insert(0, {'type': 'reasoning', 'id': 'rs_fixture', 'summary': [], 'encrypted_content': 'fixture_encrypted'})
+        return JSONResponse({"id": "resp_fixture", "object": "response", "created_at": 1, "model": "fixture",
+                             "status": "completed", "output": output})
+    app = Starlette(routes=[Route("/v1/responses", completion, methods=["POST"])])
     server, thread, sock, port = serve(app)
     state.url = f"http://127.0.0.1:{port}/v1"
     state.requests = requests
@@ -121,7 +131,7 @@ def test_model_failure_after_execution_never_replays(modules, manager, configure
     try:
         def forbidden(*args, **kwargs):
             pytest.fail("MCP must not enter legacy Responses fallback")
-        monkeypatch.setattr(api, "_try_responses_api", forbidden)
+        monkeypatch.setattr(api.client.chat.completions, "create", forbidden)
         text = api.chat("2+3?", conversation={"chat": "Alice", "sender": "Alice", "is_group": False})
         assert "未完成" in text and "500" in text
         assert live_mcp.calls == [(2, 3)]
@@ -145,5 +155,16 @@ def test_mcp_model_headers_and_403_stage(modules, manager, configured, live_mcp,
         else:
             assert text == '查询结果：2 + 3 = 5'
             assert live_mcp.calls == [(2, 3)]
+    finally:
+        api.client.close()
+
+
+def test_vision_uses_responses_only(modules, live_model):
+    core, _ = modules
+    api = core.OpenAIAPI(SimpleNamespace(model1='fixture', api_key='fixture', base_url=live_model.url, prompt='Describe'))
+    try:
+        assert api.chat('图片内容', image_url='https://example.org/image.png', stream=True) == '普通聊天回复'
+        content = live_model.requests[0]['input'][-1]['content']
+        assert content == [{'type': 'input_text', 'text': '图片内容'}, {'type': 'input_image', 'image_url': 'https://example.org/image.png'}]
     finally:
         api.client.close()

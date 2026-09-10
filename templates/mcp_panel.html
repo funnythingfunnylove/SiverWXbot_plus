@@ -9,7 +9,7 @@
 <div class="config-panel" id="tab-mcp">
   <div class="cfg-card">
     <div class="cfg-card-header"><i class="bi bi-tools"></i><h5>MCP 对话工具</h5><span class="desc">让机器人查询外部信息、执行授权操作</span></div>
-    <p class="cfg-hint">使用「OpenAI API 格式兼容接口」且模型支持工具调用时生效。先添加服务、获取工具，再选择工具和授权会话。请使用本页的「保存总设置」和「保存服务」按钮；MCP 设置保存后下次对话生效，无需重启机器人。</p>
+    <p class="cfg-hint">使用「OpenAI API 格式兼容接口」且模型支持 Responses 工具调用时生效（仅使用 /responses）。先添加服务、获取工具，再选择工具和授权会话。请使用本页的「保存总设置」和「保存服务」按钮；MCP 设置保存后下次对话生效，无需重启机器人。</p>
     <div class="switch-row"><input class="form-check-input" type="checkbox" id="mcp-enabled"><label for="mcp-enabled">启用 MCP 对话工具</label></div>
     <div class="row">
       <div class="col-md-6 mb-3"><label class="cfg-label" for="mcp-rounds">每条消息最大工具轮数</label><input class="form-control" type="number" id="mcp-rounds" min="1" max="8" value="6"></div>

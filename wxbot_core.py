@@ -1326,176 +1326,34 @@ class OpenAIAPI:
 
     def chat(self, message, model=None, stream=False, prompt=None, history=None,
              image_path: str = "", image_url: str = "", conversation=None):
-        """
-        调用 OpenAI 兼容接口获取 AI 回复。
+        """Use Responses exclusively for ordinary chat, vision and MCP calls.
 
-        :param message: 用户输入的消息内容
-        :param model:   指定模型，为 None 时使用当前默认模型
-        :param stream:  是否使用流式输出
-        :param prompt:  系统提示词，为 None 时使用配置中的 prompt
-        :param history: 历史消息列表（MemoryManager.get_messages 返回值）
-        :param image_path: 本地图片路径，优先于 image_url
-        :param image_url:  图片 URL，image_path 为空时使用
-        :return:        AI 回复的文本字符串
+        Keep the stream argument for existing callers; collect a complete response
+        before sending it to WeChat. Never switch protocols on errors.
         """
-        if model is None:
-            model = self.DS_NOW_MOD
-        if prompt is None:
-            prompt = self.config.prompt
-
-        messages = [{"role": "system", "content": prompt}]
-        if history:
-            messages.extend(self._build_history_messages(history))
+        from mcp_manager import response_text, safe_error
+        model = model or self.DS_NOW_MOD
+        prompt = self.config.prompt if prompt is None else prompt
+        items = [{"role": "system", "content": prompt or ""}]
+        items.extend(self._build_history_messages(history))
+        content = message
         if image_path or image_url:
-            user_content = [
-                {"type": "text", "text": message},
-                self._build_chat_image_block(image_path, image_url),
-            ]
-        else:
-            user_content = message
-        messages.append({"role": "user", "content": user_content})
-
-        # MCP is opt-in per conversation. Its loop never enters the automatic
-        # Responses fallback, which could replay a tool that already succeeded.
+            content = [{"type": "input_text", "text": message},
+                       self._build_responses_image_block(image_path, image_url)]
+        items.append({"role": "user", "content": content})
         if conversation:
-            mcp_reply = get_mcp_manager().reply(self.client, model, messages, conversation)
-            if mcp_reply is not None:
-                return mcp_reply
-
+            result = get_mcp_manager().reply(self.client, model, items, conversation)
+            if result is not None:
+                return result
         try:
-            response = self.client.chat.completions.create(
-                model=model,
-                messages=messages,
-                stream=stream,
-            )
-        except Exception as e:
-            error_msg = str(e)
-            error_type = type(e).__name__
-            log(level="WARN", message=f"Chat Completions API 调用失败 [{error_type}]: {error_msg}")
-            log(level="INFO", message="尝试备用方案（Responses API）")
-            return self._try_responses_api(message, model, stream, prompt, history, image_path, image_url)
-
-        try:
-            if stream:
-                # 流式模式：逐块拼接思维链内容与正式回复内容
-                reasoning_content = ""
-                content = ""
-                chunk_count = 0
-
-                for chunk in response:
-                    chunk_count += 1
-
-                    # 检查 chunk 是否有 choices 属性
-                    if not chunk.choices:
-                        continue
-
-                    choice = chunk.choices[0]
-                    if not hasattr(choice, 'delta'):
-                        continue
-
-                    delta = choice.delta
-
-                    # 优先拼接思维链内容（如 DeepSeek-R1 等支持 reasoning_content 的模型）
-                    if hasattr(delta, 'reasoning_content') and delta.reasoning_content:
-                        reasoning_content += delta.reasoning_content
-
-                    # 拼接正常回复内容
-                    if hasattr(delta, 'content') and delta.content:
-                        content += delta.content
-
-                # 返回内容（优先返回正常内容，如果为空则返回思维链内容）
-                result = content.strip() if content.strip() else reasoning_content.strip()
-                if result:
-                    log(message=f"API 流式返回成功（共 {chunk_count} 个块）：{result[:100]}...")
-                    return result
-                else:
-                    log(level="WARN", message=f"流式响应为空（收到 {chunk_count} 个块），尝试备用方案")
-                    return self._try_responses_api(message, model, stream, prompt, history, image_path, image_url)
-            else:
-                # 非流式模式：直接取 choices[0] 的消息内容
-                if response.choices and len(response.choices) > 0:
-                    message_obj = response.choices[0].message
-
-                    # 检查是否有 content 属性
-                    if hasattr(message_obj, 'content') and message_obj.content:
-                        output = message_obj.content
-                        log(message=f"API 非流式返回成功：{output[:100]}...")
-                        return output
-                    else:
-                        log(level="WARN", message="非流式响应内容为空，尝试备用方案")
-                        return self._try_responses_api(message, model, stream, prompt, history, image_path, image_url)
-                else:
-                    log(level="WARN", message="响应中没有 choices，尝试备用方案")
-                    return self._try_responses_api(message, model, stream, prompt, history, image_path, image_url)
-        except Exception as e:
-            error_type = type(e).__name__
-            log(level="WARN", message=f"解析 API 响应出错 [{error_type}]: {str(e)}，尝试备用方案")
-            return self._try_responses_api(message, model, stream, prompt, history, image_path, image_url)
-
-    def _try_responses_api(self, message, model, stream, prompt, history=None, image_path="", image_url=""):
-        """
-        备用方案：使用 Responses API 调用。
-        当 Chat Completions API 调用失败时自动降级到此方案。
-        注意：备用方案暂不支持流式输出，统一使用非流式模式。
-        """
-        try:
-            if stream:
-                log(level="WARN", message="备用方案不支持流式输出，将使用非流式模式")
-
-            log(message=f"备用方案：使用 Responses API, model={model}")
-
-            # 与主路径保持一致的输入结构：system 提示词 + 历史消息 + 用户消息
-            input_items = []
-            if prompt and prompt.strip():
-                input_items.append({"role": "system", "content": prompt})
-            input_items.extend(self._build_history_messages(history))
-            if image_path or image_url:
-                input_items.append({
-                    "role": "user",
-                    "content": [
-                        {"type": "input_text", "text": message},
-                        self._build_responses_image_block(image_path, image_url),
-                    ],
-                })
-            else:
-                input_items.append({"role": "user", "content": message})
-
-            response = self.client.responses.create(
-                model=model,
-                input=input_items,
-            )
-
-            # 遍历 output 提取 message 条目中的文本（兼容 reasoning 等其它条目类型）
-            output_text = ""
-            for item in (response.output or []):
-                if getattr(item, 'type', '') != 'message':
-                    continue
-                item_content = getattr(item, 'content', None)
-                if isinstance(item_content, str):
-                    if item_content.strip():
-                        output_text = item_content
-                        break
-                    continue
-                if not item_content:
-                    continue
-                parts = []
-                for part in item_content:
-                    if getattr(part, 'type', '') == 'output_text' and getattr(part, 'text', ''):
-                        parts.append(part.text)
-                output_text = "".join(parts)
-                if output_text.strip():
-                    break
-
-            if output_text.strip():
-                log(message=f"备用方案返回成功：{output_text[:100]}...")
-                return output_text
-
-            log(level="WARN", message="备用方案响应内容为空")
-            return "API返回错误，请稍后再试"
-
-        except Exception as e:
-            log(level="ERROR", message=f"备用方案也失败 [{type(e).__name__}]: {str(e)}")
-            return "API返回错误，请稍后再试"
+            response = self.client.responses.create(model=model, input=items, stream=False, store=False)
+            text = response_text(response)
+            if text:
+                return text
+            log(level="WARNING", message="Responses API 返回为空或未完成")
+        except Exception as exc:
+            log(level="ERROR", message="模型请求阶段（Responses）：" + safe_error(exc))
+        return "API返回错误，请稍后再试"
 
 
 class DifyAPI:
