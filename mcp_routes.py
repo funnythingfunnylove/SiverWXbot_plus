@@ -57,5 +57,7 @@ def register_mcp_routes(app, login_required, manager):
     @guarded
     def mcp_test_server():
         server = store.draft(request.get_json())
+        if server.get("kind") == "hrzh_person":
+            return jsonify(status="success", **manager.test_person(server))
         # Discovery only. Never invoke a tool from the connection-test button.
         return jsonify(status="success", tools=manager.test(server))

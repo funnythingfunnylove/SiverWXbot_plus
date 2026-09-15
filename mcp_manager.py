@@ -12,7 +12,7 @@ import threading
 from contextlib import AsyncExitStack, asynccontextmanager
 from datetime import timedelta
 
-from mcp_config import permits
+from mcp_config import permits, HRZH_URL
 
 
 class MCPError(Exception):
@@ -67,6 +67,30 @@ async def discover_tools(session):
             raise MCPError("MCP 工具列表分页异常")
         seen.add(cursor)
     raise MCPError("MCP 工具列表分页过多")
+
+
+async def personal_tools(session, server):
+    if server.get("kind") != "hrzh_person":
+        return await discover_tools(session), None
+    result = await session.call_tool("weekly_identity", {})
+    if result.isError:
+        raise MCPError("用户 Key 身份验证失败")
+    identity = getattr(result, "structuredContent", None)
+    if not isinstance(identity, dict):
+        try:
+            identity = json.loads(next(b.text for b in result.content if getattr(b, "type", None) == "text"))
+        except Exception as exc:
+            raise MCPError("身份接口返回格式无效") from exc
+    if not isinstance(identity, dict):
+        raise MCPError("身份接口返回格式无效")
+    if not identity.get("person_id") or not isinstance(identity.get("tools"), list):
+        raise MCPError("该 Key 未绑定人员或未返回工具权限")
+    tools = await discover_tools(session)
+    allowed = {name for name in identity["tools"] if isinstance(name, str)}
+    # Only expose identity metadata, never the raw result or key identifier.
+    public = {k: identity.get(k) for k in ("person_id", "category", "access")}
+    public["catalog_count"] = len(tools)
+    return [tool for tool in tools if tool.name in allowed], public
 
 
 def tool_name(server_id, name):
@@ -147,18 +171,34 @@ class MCPManager:
 
     def eligible(self, context):
         config = self.store.read()
-        return config, [s for s in config["servers"] if config["enabled"] and permits(s, context) and s["allowed_tools"]]
+        servers = config["servers"]
+        personal = not (context or {}).get("is_group") and any(
+            s.get("kind") == "hrzh_person" and (context or {}).get("chat") in s["allowed_chats"] for s in servers)
+        return config, [s for s in servers if config["enabled"] and permits(s, context) and s["allowed_tools"]
+                        and not (personal and s.get("kind") != "hrzh_person" and s["url"].rstrip('/') == HRZH_URL)]
 
     def test(self, server):
         async def discover():
             try:
                 async with self.connector(server) as session:
-                    tools = await discover_tools(session)
+                    tools, _ = await personal_tools(session, server)
                     return [{"name": t.name, "description": t.description or "", "input_schema": t.inputSchema,
                              "read_only": bool(t.annotations and t.annotations.readOnlyHint)} for t in tools]
             except Exception as exc:
                 raise stage_error("MCP 连接/工具发现阶段", exc) from exc
         return self.submit(discover, server["timeout"])
+
+    def test_person(self, server):
+        async def check():
+            try:
+                async with self.connector(server) as session:
+                    tools, identity = await personal_tools(session, server)
+                    return {"identity": identity, "tools": [
+                        {"name": t.name, "description": t.description or "", "input_schema": t.inputSchema,
+                         "read_only": bool(t.annotations and t.annotations.readOnlyHint)} for t in tools]}
+            except Exception as exc:
+                raise stage_error("MCP 用户身份/工具发现阶段", exc) from exc
+        return self.submit(check, server["timeout"])
 
     def reply(self, client, model, messages, context):
         config, servers = self.eligible(context)
@@ -202,7 +242,7 @@ class MCPManager:
             for server in servers:
                 try:
                     session = await stack.enter_async_context(self.connector(server))
-                    discovered = await discover_tools(session)
+                    discovered, _ = await personal_tools(session, server)
                 except Exception as exc:
                     raise stage_error("MCP 连接/工具发现阶段", exc) from exc
                 self.log("INFO", f"MCP 工具发现成功：{server['name']}，共 {len(discovered)} 个工具")

@@ -225,3 +225,145 @@ def test_panel_routes_auth_crud_test_and_csrf(manager, live_mcp):
     assert len(result.json["tools"]) == 2 and live_mcp.calls == []
     assert client.delete(f"/api/mcp/servers/{ident}", headers=headers).status_code == 200
     assert client.get("/api/mcp/config").json["config"]["servers"] == []
+
+
+def person(chat="Alice", key="fixture-alice", **extra):
+    return dict(kind="hrzh_person", name="项目管理", chat=chat, key=key,
+                enabled=True, allowed_tools=["add"], **extra)
+
+
+def test_person_config_isolated_and_redacted(store):
+    from mcp_config import HRZH_URL
+    ident = store.save(person(url="https://ignored.example", allowed_groups=["Project"]))
+    saved = store.read()["servers"][0]
+    assert saved["url"] == HRZH_URL and saved["allowed_groups"] == []
+    assert saved["allowed_chats"] == ["Alice"]
+    assert "fixture-alice" not in json.dumps(store.public())
+    update = {**store.public()["servers"][0], "chat": "Alice"}
+    store.save(update)
+    assert store.read()["servers"][0]["headers"] == saved["headers"]
+    store.save({**update, "key": "fixture-new"})
+    assert store.read()["servers"][0]["headers"] == {"Authorization": "Bearer fixture-new"}
+    with pytest.raises(ValueError, match="已配置"):
+        store.save(person())
+    with pytest.raises(ValueError):
+        store.save(person(key="bad\nkey"))
+    with pytest.raises(ValueError):
+        store.save({**update, "kind": "service"})
+    assert store.read()["servers"][0]["id"] == ident
+
+
+@pytest.mark.parametrize("state", ["enabled", "disabled", "empty"])
+def test_person_prevents_shared_private_fallback(store, manager, state):
+    from mcp_config import HRZH_URL
+    shared = store.save(dict(name="shared", url=HRZH_URL, enabled=True,
+                             allowed_chats=["Alice", "Bob"], allowed_groups=["Project"],
+                             allowed_tools=["add"], headers={"Authorization": "Bearer shared"}))
+    data = person()
+    if state == "disabled":
+        data["enabled"] = False
+    if state == "empty":
+        data["allowed_tools"] = []
+    personal = store.save(data)
+    store.settings({"enabled": True})
+    assert [s["id"] for s in manager.eligible(CONTEXT)[1]] == ([personal] if state == "enabled" else [])
+    assert [s["id"] for s in manager.eligible({**CONTEXT, "chat": "Bob"})[1]] == [shared]
+    assert [s["id"] for s in manager.eligible(dict(chat="Project", is_group=True, mentioned=True))[1]] == [shared]
+
+
+@pytest.mark.parametrize("identity", [[], {}, {"person_id": "1"}, {"person_id": None, "tools": ["add"]}])
+def test_person_invalid_identity_fails_closed(identity):
+    from mcp_manager import personal_tools
+    async def listing(**kwargs):
+        return ListToolsResult(tools=[Tool(name="add", inputSchema={"type": "object"})])
+    async def calling(*args):
+        return CallToolResult(content=[TextContent(type="text", text=json.dumps(identity))])
+    with pytest.raises(MCPError):
+        asyncio.run(personal_tools(SimpleNamespace(list_tools=listing, call_tool=calling), {"kind": "hrzh_person"}))
+
+
+def test_person_keys_and_permissions_in_conversation(store):
+    events = []
+    @asynccontextmanager
+    async def connector(server):
+        key = server["headers"]["Authorization"]
+        async def listing(**kwargs):
+            return ListToolsResult(tools=[Tool(name=n, inputSchema={"type": "object"}) for n in ["add", "private"]])
+        async def calling(name, arguments):
+            events.append((key, name))
+            if name == "weekly_identity":
+                return CallToolResult(content=[], structuredContent={
+                    "key_id": "not-public", "person_id": key[-1], "category": "staff",
+                    "access": "read", "tools": ["add", "not-discovered"] if key.endswith("A") else ["private"]})
+            return CallToolResult(content=[TextContent(type="text", text="ok")])
+        yield SimpleNamespace(list_tools=listing, call_tool=calling)
+    manager = MCPManager(store, connector=connector)
+    try:
+        for chat, key in [("Alice", "fixture-A"), ("Bob", "fixture-B")]:
+            data = person(chat, key)
+            data["allowed_tools"] = ["add", "private"]
+            store.save(data)
+        store.settings({"enabled": True})
+        for chat, expected in [("Alice", "add"), ("Bob", "private")]:
+            context = {**CONTEXT, "chat": chat}
+            config, servers = manager.eligible(context)
+            checked = manager.test_person(servers[0])
+            assert [t["name"] for t in checked["tools"]] == [expected]
+            assert "key_id" not in json.dumps(checked)
+            count = 0
+            async def create(**kwargs):
+                nonlocal count
+                count += 1
+                assert [t["name"] for t in kwargs["tools"]] == [tool_name(servers[0]["id"], expected)]
+                assert "fixture-" not in json.dumps(kwargs)
+                return response(calls=[call(tool_name(servers[0]["id"], expected), {})]) if count == 1 else response("完成")
+            assert manager.submit(lambda: manager.converse(create, "model", [], context, config, servers), 10) == "完成"
+        assert ("Bearer fixture-A", "private") not in events
+        assert ("Bearer fixture-B", "add") not in events
+        assert ("Bearer fixture-A", "add") in events
+        assert ("Bearer fixture-B", "private") in events
+    finally:
+        manager.close()
+
+
+def test_person_real_http_identity_and_route(store):
+    from conftest import serve
+    from mcp.server.fastmcp import FastMCP, Context
+    from mcp_manager import connect_server
+    service = FastMCP("personal fixture", stateless_http=True, json_response=True)
+    seen = []
+    @service.tool()
+    def weekly_identity(ctx: Context) -> dict:
+        auth = ctx.request_context.request.headers.get("authorization")
+        seen.append(auth)
+        return {"person_id": auth[-1], "access": "read", "category": "staff",
+                "key_id": "hidden-fixture-id", "tools": ["add"] if auth.endswith("A") else []}
+    @service.tool()
+    def add() -> int:
+        return 3
+    server, thread, sock, port = serve(service.streamable_http_app())
+    @asynccontextmanager
+    async def redirect_fixture(config):
+        # Only tests redirect the fixed production endpoint; retain actual headers/SDK.
+        async with connect_server({**config, "url": f"http://127.0.0.1:{port}/mcp"}) as session:
+            yield session
+    manager = MCPManager(store, connector=redirect_fixture)
+    app = Flask(__name__)
+    register_mcp_routes(app, lambda f: f, manager)
+    client = app.test_client()
+    try:
+        for user in ("A", "B"):
+            data = person(user, "fixture-" + user)
+            result = client.post("/api/mcp/test", json=data, headers={"X-MCP-Request": "1"})
+            assert result.status_code == 200, result.json
+            assert result.json["identity"]["person_id"] == user
+            assert [t["name"] for t in result.json["tools"]] == (["add"] if user == "A" else [])
+            assert "fixture-" not in result.text and "key_id" not in result.text
+            assert client.post("/api/mcp/servers", json=data, headers={"X-MCP-Request": "1"}).status_code == 200
+        assert seen == ["Bearer fixture-A", "Bearer fixture-B"]
+        assert "fixture-" not in client.get("/api/mcp/config").text
+    finally:
+        manager.close()
+        server.should_exit = True
+        thread.join(timeout=5)
+        sock.close()

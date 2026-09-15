@@ -10,6 +10,7 @@ from urllib.parse import urlsplit
 
 
 DEFAULTS = {"enabled": False, "max_rounds": 6, "total_timeout": 120, "servers": []}
+HRZH_URL = "https://hrzh.cc/mcp"
 
 
 def string_list(value, label):
@@ -36,6 +37,29 @@ def validate_server(data, previous=None):
     if not isinstance(data, dict):
         raise ValueError("服务配置必须是 JSON 对象")
     previous = previous or {}
+    kind = data.get("kind", previous.get("kind", "service"))
+    if kind not in ("service", "hrzh_person"):
+        raise ValueError("未知 MCP 服务类型")
+    if previous and kind != previous.get("kind", "service"):
+        raise ValueError("不能修改服务类型，请添加新配置")
+    personal = kind == "hrzh_person"
+    if personal:
+        data = dict(data)
+        data["url"] = HRZH_URL
+        chat = data.get("chat", "")
+        if not isinstance(chat, str) or not chat.strip() or len(chat) > 256:
+            raise ValueError("请填写准确的微信私聊窗口名称")
+        key = data.get("key")
+        if key is not None:
+            if not isinstance(key, str) or not re.fullmatch(r"[!-~]{1,8192}", key):
+                raise ValueError("Key 不能为空且必须是单行文本；只填写 Key，不带 Bearer 前缀")
+            data["headers"] = {"Authorization": "Bearer " + key}
+        else:
+            data["headers"] = previous.get("headers", {})
+        if not data["headers"].get("Authorization"):
+            raise ValueError("请填写用户 Key")
+        data["allowed_chats"] = [chat.strip()]
+        data["allowed_groups"] = []
     name = data.get("name", "")
     url = data.get("url", "")
     if not isinstance(name, str) or not name.strip() or len(name) > 80:
@@ -60,6 +84,7 @@ def validate_server(data, previous=None):
         if key.lower() in {"host", "content-length", "connection", "transfer-encoding", "mcp-session-id", "mcp-protocol-version"}:
             raise ValueError("不能覆盖 HTTP/MCP 协议请求头")
     result = {
+        "kind": "hrzh_person" if personal else "service",
         "id": previous.get("id", uuid.uuid4().hex),
         "name": name.strip(), "url": url.strip(), "headers": headers,
         "enabled": boolean(data.get("enabled", False), "启用状态"),
@@ -142,13 +167,18 @@ class MCPConfigStore:
             server = self.draft(data)
             current = self.read()
             servers = current["servers"]
+            if server["kind"] == "hrzh_person" and any(
+                s.get("kind") == "hrzh_person" and s["id"] != server["id"]
+                and s["allowed_chats"] == server["allowed_chats"] for s in servers
+            ):
+                raise ValueError("该微信用户已配置个人 Key，请编辑已有用户")
             for index, old in enumerate(servers):
                 if old["id"] == server["id"]:
                     servers[index] = server
                     break
             else:
-                if len(servers) >= 10:
-                    raise ValueError("最多添加 10 个 MCP 服务")
+                if len(servers) >= 100:
+                    raise ValueError("最多添加 100 个 MCP 服务或用户")
                 servers.append(server)
             self._write(current)
             return server["id"]
