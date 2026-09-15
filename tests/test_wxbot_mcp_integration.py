@@ -39,7 +39,7 @@ def live_model():
                           (request.headers.get('user-agent') != 'Mozilla/5.0' or request.headers.get('accept') != '*/*')):
             return JSONResponse({'error': {'message': 'fixture gateway denied', 'type': 'permission_error'}}, status_code=403)
         outputs = [m for m in payload["input"] if m.get("type") == "function_call_output"]
-        if not payload.get("tools"):
+        if not any(" / add:" in t.get("description", "") for t in payload.get("tools", [])):
             message = {"role": "assistant", "content": "普通聊天回复"}
         elif not outputs:
             name = next(t["name"] for t in payload["tools"] if " / add:" in t["description"])
@@ -105,7 +105,11 @@ def test_bot_message_to_mcp_to_wechat_send(modules, manager, configured, live_mc
         bot.process_message(chat, message)
         assert sent[-1] == "普通聊天回复"
         assert live_mcp.calls == [(2, 3)]
-        assert "tools" not in live_model.requests[-1]
+        if is_group:
+            assert "tools" not in live_model.requests[-1]
+        else:
+            assert {t["name"] for t in live_model.requests[-1]["tools"]} == {
+                "reminder_create", "reminder_list", "reminder_cancel"}
     finally:
         bot.api.client.close()
 
@@ -170,3 +174,108 @@ def test_vision_uses_responses_only(modules, live_model):
         assert content == [{'type': 'input_text', 'text': '图片内容'}, {'type': 'input_image', 'image_url': 'https://example.org/image.png'}]
     finally:
         api.client.close()
+
+
+@pytest.mark.parametrize("delivery", ["success", "unknown", "exception", "revoked", "stopped"])
+def test_conversation_creates_and_proactively_delivers_reminder(modules, manager, monkeypatch, delivery):
+    from datetime import timedelta
+    import reminder_store
+    core, _ = modules
+    monkeypatch.setattr(core, "get_mcp_manager", lambda: manager)
+    current = reminder_store.local_now().replace(second=0, microsecond=0)
+    due = current + timedelta(minutes=5)
+    model_requests = []
+    async def completion(request):
+        payload = await request.json()
+        model_requests.append(payload)
+        assert payload["store"] is False and payload["stream"] is False
+        assert {t["name"] for t in payload["tools"]} == {"reminder_create", "reminder_list", "reminder_cancel"}
+        outputs = [m for m in payload["input"] if m.get("type") == "function_call_output"]
+        if not outputs:
+            output = [{"id": "fc_reminder", "call_id": "reminder", "type": "function_call", "name": "reminder_create",
+                       "arguments": json.dumps({"body": "参加会议", "run_at": due.strftime("%Y-%m-%d %H:%M"),
+                                                "repeat": "once", "mode": "text"})}]
+        else:
+            result = json.loads(outputs[-1]["output"])
+            assert result["is_error"] is False
+            saved = json.loads(result["content"])
+            output = [{"type": "message", "id": "msg_fixture", "role": "assistant", "status": "completed",
+                       "content": [{"type": "output_text", "text": "已创建提醒 " + saved["id"], "annotations": []}]}]
+        return JSONResponse({"id": "resp_fixture", "object": "response", "created_at": 1,
+                             "model": "fixture", "status": "completed", "output": output})
+    server, thread, sock, port = serve(Starlette(routes=[Route("/v1/responses", completion, methods=["POST"])]))
+    bot = core.WXBot()
+    config = bot.config
+    config.listen_list = ["Alice"]
+    config.AllListen_switch = False
+    config.group = ["Project"]
+    config.chat_listen_only = False
+    config.api_key = "fixture-model"
+    config.base_url = f"http://127.0.0.1:{port}/v1"
+    config.model1 = "fixture"
+    config.memory_switch = False
+    config.reply_delay_switch = False
+    config.chat_keyword_switch = False
+    config.chat_max_round_switch = False
+    config.chat_split_reply_switch = False
+    bot.api = core.OpenAIAPI(config)
+    replies, proactive = [], []
+    def send(**kwargs):
+        proactive.append(kwargs)
+        if delivery == "exception":
+            raise RuntimeError("uncertain send")
+        return delivery == "success"
+    bot.wx = SimpleNamespace(SendMsg=send)
+    chat = SimpleNamespace(who="Alice", chat_type="friend", SendMsg=lambda msg, **kw: replies.append(msg) or True)
+    message = SimpleNamespace(sender="Alice", content="5 分钟后提醒我参加会议", type="text", attr="friend")
+    try:
+        bot.process_message(chat, message)
+        assert len(model_requests) == 2 and "已创建提醒" in replies[0]
+        saved = manager.reminders.list("Alice")
+        assert len(saved) == 1 and saved[0]["next_time"] == due.strftime("%Y-%m-%d %H:%M")
+        bot._check_private_reminders()
+        assert proactive == []
+        # No further incoming message: scheduler alone must send the reminder.
+        monkeypatch.setattr(reminder_store, "local_now", lambda: due)
+        if delivery == "revoked":
+            config.listen_list = []
+        if delivery == "stopped":
+            bot.run_flag = False
+        bot._check_private_reminders()
+        bot._check_private_reminders()
+        if delivery in ("revoked", "stopped"):
+            assert proactive == []
+        else:
+            assert len(proactive) == 1
+            assert proactive[0]["who"] == "Alice" and "参加会议" in proactive[0]["msg"]
+            assert len(model_requests) == 2  # Fixed text does not query a model at delivery.
+            assert manager.reminders.list("Alice")[0]["last_status"] == ("sent" if delivery == "success" else "unknown")
+    finally:
+        bot.api.client.close()
+        server.should_exit = True
+        thread.join(timeout=5)
+        sock.close()
+
+
+def test_reminder_database_in_panel_backup(modules, tmp_path, monkeypatch):
+    from datetime import timedelta
+    from reminder_store import ReminderStore, local_now
+    _, web = modules
+    store = ReminderStore(str(tmp_path / "config" / "reminders.sqlite3"))
+    due = local_now() + timedelta(minutes=5)
+    original = store.create("Alice", "备份提醒", due.strftime("%Y-%m-%d %H:%M"))
+    monkeypatch.setattr(web, "base_dir", lambda: str(tmp_path))
+    monkeypatch.setattr(web, "BACKUP_BASE", str(tmp_path / "backups"))
+    backup_path = web._do_backup()
+    copy = ReminderStore(str(Path(backup_path) / "config" / "reminders.sqlite3"))
+    assert copy.list("Alice")[0]["id"] == original["id"]
+
+
+def test_admin_private_reminders_match_existing_admin_routing(modules):
+    core, _ = modules
+    bot = core.WXBot.__new__(core.WXBot)
+    bot.config = SimpleNamespace(group=[], cmd="Admin", chat_listen_only=False, AllListen_switch=False, listen_list=[])
+    assert bot._reminder_recipient_allowed("Admin")
+    assert not bot._reminder_recipient_allowed("Other")
+    bot.config.group = ["Admin"]
+    assert not bot._reminder_recipient_allowed("Admin")

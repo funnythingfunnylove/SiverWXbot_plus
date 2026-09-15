@@ -475,7 +475,17 @@ def _do_backup():
     memory_src = os.path.join(base_dir(), 'memory')
 
     if os.path.exists(config_src):
-        shutil.copytree(config_src, os.path.join(backup_dir, 'config'))
+        config_backup = os.path.join(backup_dir, 'config')
+        shutil.copytree(config_src, config_backup, ignore=shutil.ignore_patterns(
+            'reminders.sqlite3', 'reminders.sqlite3-journal', 'reminders.sqlite3-wal', 'reminders.sqlite3-shm'))
+        # SQLite backup API produces a consistent snapshot while reminders are running.
+        reminders_path = os.path.join(config_src, 'reminders.sqlite3')
+        if os.path.exists(reminders_path):
+            import sqlite3
+            from contextlib import closing
+            with closing(sqlite3.connect(reminders_path)) as source:
+                with closing(sqlite3.connect(os.path.join(config_backup, 'reminders.sqlite3'))) as destination:
+                    source.backup(destination)
     if os.path.exists(memory_src):
         shutil.copytree(memory_src, os.path.join(backup_dir, 'memory'))
 
