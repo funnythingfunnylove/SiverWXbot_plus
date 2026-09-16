@@ -50,7 +50,7 @@ python web_server.py
 
 ## 🏢 天眼查网页桥接 MCP 与 Skill 管理
 
-后台「MCP 工具」内置天眼查网页 MCP：通过本机 Chrome 登录态读取网页，再由独立 FastMCP 服务提供搜索、工商画像与能力发现工具。不需要天眼 AI 密钥，不调用官方 MCP；官方 Skill 仅作业务流程参考。支持 Skill Markdown/ZIP 导入、编辑及启停。部署见 [网页桥接说明](docs/company-query.md)，Skill 见 [管理说明](docs/skills.md)。
+后台「MCP 工具」内置天眼查网页 MCP：通过本机 Chrome 登录态读取网页，再由独立 FastMCP 服务提供搜索、股东穿透、实控人、司法与经营风险、债券财务、年报和人员关系等 41 个工具（实际可用范围由网页披露和账户权限决定）。不需要天眼 AI 密钥，不调用官方 MCP；官方 Skill 仅作业务流程参考。支持 Skill Markdown/ZIP 导入、编辑及启停。部署见 [网页桥接说明](docs/company-query.md)，Skill 见 [管理说明](docs/skills.md)。
 
 ## 🤖 内置 Agent 分支版本
 

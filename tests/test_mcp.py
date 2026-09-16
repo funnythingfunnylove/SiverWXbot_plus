@@ -406,15 +406,15 @@ def test_http_company_roundtrip():
             assert all(t.annotations.readOnlyHint for t in listed.tools)
             assert all(t.outputSchema for t in listed.tools)
             capabilities = await session.call_tool('get_company_capabilities', {'company_id': '123'})
-            assert capabilities.structuredContent['tools'][0]['tool_name'] == 'get_company_basic_profile'
-            assert jobs == []  # Capability discovery does not browse or claim account access.
+            assert capabilities.structuredContent['tools'][0]['tool_name'] == 'get_company_section'
+            assert jobs[0]['operation'] == 'get_capabilities'  # Discovery now observes the page.
             result = await session.call_tool('get_company_basic_profile', {'company_id': '123'})
             assert not result.isError
             assert result.structuredContent['data']['credit_code'] == 'fixture-credit'
             assert jobs[0]['url'] == 'https://www.tianyancha.com/company/123'
             invalid = await session.call_tool('search_companies', {'query': 'test', 'limit': 21})
             assert invalid.isError
-            assert len(jobs) == 1
+            assert len(jobs) == 2
 
     try:
         asyncio.run(run())
@@ -454,3 +454,17 @@ def test_busy_and_wrong_source():
     finally:
         worker.join(3)
     assert failures and 'SOURCE_CHANGED' in failures[0]
+
+
+def test_structured_website_result_deduplicates_and_keeps_coverage():
+    from mcp.types import CallToolResult, TextContent
+    data = {'schema_version': 2, 'status': 'partial', 'coverage': {'complete': False, 'risk_conclusion_allowed': False},
+            'pagination': {'next_page': 2}, 'tables': ['x' * 14000]}
+    result = CallToolResult(content=[TextContent(type='text', text=json.dumps(data))], structuredContent=data)
+    rendered = json.loads(format_result(result))
+    assert rendered['truncated']
+    assert rendered['coverage_metadata']['pagination']['next_page'] == 2
+    assert not rendered['coverage_metadata']['coverage']['complete']
+    small = {'schema_version': 2, 'status': 'no_records'}
+    result = CallToolResult(content=[TextContent(type='text', text=json.dumps(small))], structuredContent=small)
+    assert json.loads(json.loads(format_result(result))['content']) == small

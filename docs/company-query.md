@@ -26,20 +26,93 @@ python integrations/tianyancha_mcp/server.py --transport streamable-http
 
 支持 `--port` 和 `--bridge-port` 自定义端口。此时使用后台“添加 MCP 服务”填写对应 MCP 地址，并在扩展中修改桥接地址。默认 MCP 端口仅供本机可信程序使用，不带远程身份认证，不应转发到公网。
 
-## 工具契约
+## 企业与 VIP 查询工具
 
-参考天眼一下官方 Skill 第八节的“主体搜索 → 基础画像 → 能力发现”流程，实现标准 MCP `tools/list`、`tools/call`、输入 Schema、结构化返回及只读注解。工具来自本地 SDK 注册，不转发官方 MCP。
+当前注册 **41 个 MCP 工具**。通用工具目录包含七大类 **134 个企业栏目**；这是查询适配目录，不代表每家公司、每个账号都能读取全部栏目，更不代表所有栏目均已实网验收。新增工具需在后台重新“测试连接并获取工具”，勾选授权后保存。
 
-| 工具 | 参数 | 结果与边界 |
-| --- | --- | --- |
-| `search_companies` | `query`，`limit=10`（1–20） | 第一页候选，保留 `company_id`、名称、来源链接；候选可能包含关联企业，必须核验 |
-| `get_company_basic_profile` | `company_id`（搜索返回的数字 ID） | 工商表格可见字段，原始金额、法定代表人；缺失字段明确列出 |
-| `get_company_capabilities` | `company_id`，可选 `company_name` | 返回已实现的工商工具，说明尚不支持的维度；不是实际账号权限检查 |
-| `tyc_get_access_status` | 无 | 桥接心跳、已实现与未实现能力；登录状态为待查询确认 |
+生产运行仍只需 Python MCP 依赖和扩展；Node/jsdom 仅用于开发测试。升级时重启独立 MCP 服务，在 `chrome://extensions` 重新加载扩展（0.3.0），关闭旧桥接页后重新打开并配对，再重启更新后的机器人后台。
 
-目前没有翻页、人物搜索、司法风险、股东穿透、实控人推断、批量查询或代理 `call_tool`。这不是官方完整工具集的兼容实现。官方工具的 `query` 与基础画像命名供接口设计参考，网页提取结果保留自己的字段和来源结构，不伪装成官方 API 返回。
+### 常用工具
 
-来源含网页 URL 和抓取时间；分页未覆盖返回 `partial`，不可把未查询到视作“不存在风险”。网页任务串行处理，并发返回 `BUSY`；单次页面等待 35 秒、桥接等待 45 秒。不自动重试查询。遇到登录、验证码、频率限制或页面结构变化会明确失败，不绕过验证，也不回退到官方接口。
+| 工具 | 用途 |
+| --- | --- |
+| `search_companies(query, limit)` | 搜索第一页候选，取得准确企业 ID |
+| `get_company_basic_profile(company_id)` | 工商字段与统一社会信用代码 |
+| `get_company_capabilities(company_id, group)` | 实际打开指定类别网页，逐栏返回可见、受限或未观察到；只做发现，不算完成背调 |
+| `get_company_section(company_id, section, page, limit, offset, view)` | 读取目录中的任一中文栏目，例如“历史行政处罚”“债券信息”“财务数据” |
+| `get_company_ownership_chain(company_id, page, limit, offset)` | 股东穿透的单层展开，返回原始持股比例、股东链接、下一层企业 ID；继续调用下一层并记录循环与未展开节点 |
+| `get_company_section_detail(company_id, section, row_index, page)` | 读取该页第 row_index 条记录的“详情”弹窗，序号从 1 起；没有支持的详情控件明确返回不可用 |
+| `get_company_annual_report(company_id, year, offset)` | 读取企业年报，按 `next_offset` 继续文档；“企业选择不公示”保持原文 |
+| `get_company_judicial_case_detail(company_id, case_id, offset)` | 从案件/开庭记录返回的案件链接取 case_id，再读取详情 |
+| `get_person_companies(person_id, company_id, section, page, limit, offset)` | 从主要人员链接取得两种 ID，读取担任/曾担任法定代表人、股东、高管及任职企业；不得按同名猜测人员身份 |
+| `tyc_get_access_status()` | 桥接心跳及适配器目录数量；不证明网站已登录或具备全部权限 |
+
+另有 31 个常用企业维度专用工具，与通用工具共用提取、分页和覆盖状态逻辑：
+
+- `get_company_shareholders`：股东信息。
+- `get_company_people`：主要人员。
+- `get_company_investments`：对外投资。
+- `get_company_controlled_entities`：控制企业。
+- `get_company_actual_controller`：实际控制人。
+- `get_company_beneficial_owners`：最终受益人。
+- `get_company_relationships`：疑似关系。
+- `get_company_changes`：变更记录。
+- `get_company_legal_cases`：司法案件。
+- `get_company_hearings`：开庭公告。
+- `get_company_judgments`：裁判文书。
+- `get_company_enforcements`：被执行人。
+- `get_company_dishonest_enforcements`：失信被执行人。
+- `get_company_consumption_restrictions`：限制消费令。
+- `get_company_final_enforcement_cases`：终本案件。
+- `get_company_equity_freezes`：股权冻结。
+- `get_company_administrative_penalties`：行政处罚。
+- `get_company_abnormal_operations`：经营异常。
+- `get_company_tax_arrears`：欠税公告。
+- `get_company_guarantees`：对外担保。
+- `get_company_equity_pledges`：股权出质。
+- `get_company_mortgages`：动产抵押。
+- `get_company_bonds`：债券信息。
+- `get_company_financials`：财务数据。
+- `get_company_annual_reports`：企业年报。
+- `get_company_licenses`：行政许可。
+- `get_company_qualifications`：资质证书。
+- `get_company_bids`：招投标。
+- `get_company_news`：新闻舆情。
+- `get_company_suppliers`：供应商。
+- `get_company_customers`：客户。
+
+`group` 可选：`basic`、`legal`、`risk`、`business`、`development`、`intellectual_property`、`history`。完整 `section` 枚举通过 MCP 参数 Schema 提供。
+
+### 分页、切换子栏目和证据
+
+- `page` 是网站页码，`limit` 为本次最多返回的记录数（1–20），`offset` 是当前网站页中的偏移。按 `pagination.next_offset` 读完当前页，再用 `next_page` 进入下一页；较大记录会自动降低本次返回数量。
+- 分页必须同时确认选中页码和记录已变化。无法定位页码、详情或指定子栏目时返回不可用，不用第一页或默认栏目冒充目标结果。单次任务限 35 秒，跨很多页可能超时。
+- `view` 可选择已确认的只读子栏目，例如股权出质的“身为出质人”“身为质权人”、对外投资的“对外投资(间接)”、最终受益人的“受益机构”；具体选项从能力目录读取。不能用此参数点击任意按钮。默认只覆盖当前可见子栏目/筛选条件。
+- 返回原始 `headers` / `cells`、企业/人员/案件/年报链接、`source.url` 和抓取时间。金额和单位不擅自换算；债权人/债务人、出质人/质权人、原告/被告/第三方必须按表头判读。表头复杂或单元格过长时应查看原网页/详情。
+- 企业股东逐层穿透不自动推断实控人；实控人、受益所有人和法定代表人是不同概念。网站提供的“疑似关系”仍为疑似关系。
+- 返回内容超过机器人文本预算时保留独立 `coverage_metadata`，告知截断与分页位置，不把截断结果当作全量。
+
+### 覆盖状态
+
+| status | 含义与回答方式 |
+| --- | --- |
+| `ok` | 该网页栏目当前视图的已知记录已读完；不表示整家企业背调完成 |
+| `partial` | 还有分页、页内记录、其他表、未确认总数、文档片段或截断 |
+| `no_records` | 栏目正文明确显示暂无记录，仅可描述网站此栏目未显示记录 |
+| `reported_zero` | 网站有明确的 0 计数，但没有正文记录可供核对；保留此证据层级 |
+| `auth_required` | 登录已失效或该栏目要求登录 |
+| `permission_denied` | 当前账号仍需额外会员权限；VIP 不保证全部 SVIP 栏目可读 |
+| `not_disclosed` / `not_observed` | 没有可读栏目或没有观察到，不能解释为零 |
+| `source_changed` | 栏目结构、标识或支持的数据结构不匹配 |
+| `page_unavailable` / `view_unavailable` / `detail_unavailable` | 指定页码、子栏目或详情暂不可读取 |
+
+每个返回带 `coverage`，`risk_conclusion_allowed` 始终为 false：单项查询不能自动给出“没有风险”的结论。背调答复必须列出已查询、部分查询、受限、未披露及未查询的维度，当前信息与历史信息分别核对。超时、验证码和频率限制明确失败，不自动重试、不绕过验证、不回退到官方 API/MCP。
+
+### 网页核验范围
+
+2026-09-16 使用已登录账户以抚州市城市建设集团有限公司实网观察了工商、股东、人员、控制企业、实际控制人、受益人、司法案件、开庭公告、股权出质、经营栏目、2025 年报和人员任职页。股权出质的 Chrome 保存页面已用于离线提取器验证，仓库只保存脱敏的最小结构测试样本。
+
+本次观察记录见 [企业样本核验](tianyancha-fuzhou-validation.md)。未给该企业显示的债券/财务独立栏目，无法据此实测有记录时的结构。图谱画布、站外文件下载、导出、付费升级，以及与当前 DOM 不兼容的详情样式没有冒充支持；返回可定位链接或明确的未覆盖状态。尚未在用户安装的扩展中完成新增工具的全链路实网调用验收。
 
 ## 从官方接入迁移
 
@@ -51,8 +124,9 @@ python integrations/tianyancha_mcp/server.py --transport streamable-http
 
 ```sh
 python -m pytest tests integrations/tianyancha_mcp/tests -q
-node --test integrations/tianyancha_mcp/tests/extract.test.js
+npm ci --prefix integrations/tianyancha_mcp
+npm test --prefix integrations/tianyancha_mcp
 node --check integrations/tianyancha_mcp/extension/bridge.js
 ```
 
-自动测试覆盖 MCP 传输、工具发现和调用、任务关联、认证、断连和超时、旧配置停用以及模拟 DOM 提取。真实网站页面结构需要在安装扩展后验收：搜索目标企业、核对候选 ID、对照工商字段和信用代码，检查登录过期/验证页面。Chrome 桥接页休眠或标签页受限可能使任务超时，不保证无人值守持续可用。
+自动测试覆盖 MCP 传输、所有专用工具路由、Schema 验证、任务关联、认证、断连和超时、旧配置停用、权限与空结果区分、分页内容确认、子栏目、详情、嵌套表格及脱敏实网 DOM 样本。真实扩展需在升级后验收：搜索目标企业、核对主体、逐项读取栏目、对照页码和记录，检查登录过期/验证页面。Chrome 桥接页休眠或标签页受限可能使任务超时，不保证无人值守持续可用。

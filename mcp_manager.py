@@ -104,13 +104,31 @@ def format_result(result, limit=12000):
     texts = [block.text for block in result.content if getattr(block, "type", None) == "text"]
     structured = getattr(result, "structuredContent", None)
     if structured is not None:
-        texts.append(json.dumps(structured, ensure_ascii=False))
+        # SDK servers often return the same object both as JSON text and structured
+        # content. Keep it once so source/coverage/pagination survive the text budget.
+        unique = []
+        for value in texts:
+            try:
+                duplicate = json.loads(value) == structured
+            except (ValueError, TypeError):
+                duplicate = False
+            if not duplicate:
+                unique.append(value)
+        texts = unique + [json.dumps(structured, ensure_ascii=False)]
     omitted = len(result.content) - sum(getattr(b, "type", None) == "text" for b in result.content)
     text = "\n".join(texts)
     if omitted:
         text += f"\n[工具返回 {omitted} 个非文本内容块，当前微信 MCP 回复仅支持文本，未转发这些内容。]"
     truncated = len(text) > limit
-    return json.dumps({"is_error": result.isError, "content": text[:limit], "truncated": truncated}, ensure_ascii=False)
+    output = {"is_error": result.isError, "content": text[:limit], "truncated": truncated}
+    if isinstance(structured, dict) and structured.get('schema_version') == 2:
+        output['coverage_metadata'] = {key: structured[key] for key in
+            ('status', 'dimension', 'view', 'source', 'coverage', 'pagination', 'next_offset', 'cells_truncated')
+            if key in structured}
+        if truncated:
+            output['coverage_metadata']['content_truncated'] = True
+            output['coverage_metadata']['coverage'] = {'complete': False, 'risk_conclusion_allowed': False}
+    return json.dumps(output, ensure_ascii=False)
 
 
 def response_text(response):

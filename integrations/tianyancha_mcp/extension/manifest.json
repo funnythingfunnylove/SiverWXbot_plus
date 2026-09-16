@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Tianyancha MCP Local Bridge",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Read Tianyancha pages for your local MCP server using your existing login.",
   "permissions": [
     "scripting"

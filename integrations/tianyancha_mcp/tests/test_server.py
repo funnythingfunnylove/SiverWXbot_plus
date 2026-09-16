@@ -70,7 +70,8 @@ class ProtocolTests(unittest.IsolatedAsyncioTestCase):
             async with ClientSession(read, write) as session:
                 await session.initialize()
                 tools = await session.list_tools()
-                self.assertEqual({t.name for t in tools.tools}, {'tyc_get_access_status', 'search_companies', 'get_company_basic_profile', 'get_company_capabilities'})
+                self.assertTrue({'get_company_guarantees', 'get_company_ownership_chain', 'get_company_section', 'get_company_capabilities', 'get_company_enforcements', 'get_company_financials'} <= {t.name for t in tools.tools})
+                self.assertGreater(len(tools.tools), 30)
                 status = await session.call_tool('tyc_get_access_status', {})
                 self.assertFalse(status.isError)
                 self.assertFalse(status.structuredContent['browser_connected'])
@@ -78,5 +79,60 @@ class ProtocolTests(unittest.IsolatedAsyncioTestCase):
                 self.assertTrue(invalid.isError)
                 disconnected = await session.call_tool('get_company_basic_profile', {'company_id': '123'})
                 self.assertTrue(disconnected.isError)
+
+
+class CatalogTests(unittest.IsolatedAsyncioTestCase):
+    async def test_all_convenience_tools_route_only_to_website_sections(self):
+        class RecordingBridge:
+            last_seen = 0
+            def __init__(self): self.calls=[]
+            def query(self, operation, url, **kwargs):
+                self.calls.append((operation, url, kwargs))
+                return {'status':'partial', 'source': {'url':url}, 'tables': []}
+        bridge=RecordingBridge()
+        server=module.create_mcp(bridge)
+        tools=await server.list_tools()
+        self.assertTrue(all(t.outputSchema and t.annotations.readOnlyHint for t in tools))
+        for name, label in module.TOOLS.items():
+            await server.call_tool(name, {'company_id':'123'})
+            operation,url,args=bridge.calls[-1]
+            self.assertEqual(operation,'get_section')
+            self.assertEqual(url,module.company_url('123',module.SECTIONS[label]['group']))
+            self.assertEqual(args['section'],label)
+        for group in module.GROUPS:
+            await server.call_tool('get_company_capabilities',{'company_id':'123','group':group})
+            self.assertEqual(bridge.calls[-1][0],'get_capabilities')
+        for tool,args in [
+            ('get_company_annual_report',{'company_id':'123','year':2025}),
+            ('get_company_judicial_case_detail',{'company_id':'123','case_id':'a'*32}),
+            ('get_person_companies',{'company_id':'123','person_id':'789'}),
+        ]:
+            await server.call_tool(tool,args)
+            self.assertTrue(bridge.calls[-1][1].startswith('https://www.tianyancha.com/'))
+        count=len(bridge.calls)
+        for tool,args in [
+            ('get_company_section',{'company_id':'123','section':'arbitrary URL'}),
+            ('get_company_shareholders',{'company_id':'123','page':0}),
+            ('get_company_bonds',{'company_id':'123','view':'身为出质人'}),
+            ('get_company_judicial_case_detail',{'company_id':'123','case_id':'../x'}),
+            ('get_person_companies',{'company_id':'123','person_id':'../x'}),
+        ]:
+            with self.assertRaises(Exception):
+                await server.call_tool(tool,args)
+        self.assertEqual(len(bridge.calls),count)
+
+    async def test_ownership_edges_do_not_infer_controller(self):
+        class OwnershipBridge:
+            last_seen=0
+            def query(self,*args,**kwargs):
+                return {'status':'partial','tables':[{'headers':['股东名称','持股比例'],
+                    'rows':[{'cells':['Corporate owner','100%'],'links':[{'company_id':'456','url':'https://www.tianyancha.com/company/456'}]}]}]}
+        mcp=module.create_mcp(OwnershipBridge())
+        _,data=await mcp.call_tool('get_company_ownership_chain',{'company_id':'123'})
+        self.assertEqual(data['next_company_ids'],['456'])
+        self.assertFalse(data['penetration_complete'])
+        self.assertEqual(data['ownership_edges'][0]['holding_ratio_raw'],'100%')
+        self.assertNotIn('actual_controller',data)
+
 
 if __name__ == '__main__': unittest.main()

@@ -1,0 +1,6 @@
+{
+  "name": "tianyancha-browser-mcp-tests",
+  "private": true,
+  "scripts": {"test": "node --test tests/*.test.js"},
+  "devDependencies": {"jsdom": "^26.1.0"}
+}

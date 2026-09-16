@@ -11,9 +11,13 @@ async function request(path, token, body) {
 }
 async function execute(job) {
   const url = new URL(job.url);
-  if (url.origin !== 'https://www.tianyancha.com' ||
-      !['search_companies', 'get_company'].includes(job.operation) ||
-      (job.operation === 'get_company' ? !/^\/company\/\d+$/.test(url.pathname) : url.pathname !== '/search'))
+  const companyPath = /^\/company\/[0-9]{1,20}(?:\/(?:sifa|jingxian|jingzhuang|gongsi|zhishi|past))?$/;
+  const docPath = /^\/(?:annualReport\/[0-9]{1,20}\/[0-9]{4}|judicialcase\/detail\/[0-9]{1,20}\/[a-fA-F0-9]{32})$/;
+  const allowed = job.operation === 'search_companies' ? url.pathname === '/search' :
+    job.operation === 'get_document' ? docPath.test(url.pathname) :
+    job.operation === 'get_person_section' ? /^\/human\/[0-9]{1,20}-c[0-9]{1,20}$/.test(url.pathname) :
+    ['get_company', 'get_section', 'get_section_detail', 'get_capabilities'].includes(job.operation) && companyPath.test(url.pathname);
+  if (url.origin !== 'https://www.tianyancha.com' || url.username || url.password || url.hash || !allowed)
     throw new Error('INVALID_JOB: unsupported operation or URL');
   if (workingTab !== null) {
     try { await chrome.tabs.get(workingTab); } catch { workingTab = null; }
@@ -25,13 +29,13 @@ async function execute(job) {
   while (Date.now() < deadline && running) {
     const tab = await chrome.tabs.get(workingTab);
     if (tab.status === 'complete' && tab.url === job.url) {
-      const results = await chrome.scripting.executeScript({target: {tabId: workingTab}, func: extractPage, args: [job]});
+      const results = await chrome.scripting.executeScript({target: {tabId: workingTab}, func: ['search_companies', 'get_company'].includes(job.operation) ? extractPage : extractSection, args: [job]});
       last = results[0]?.result;
-      if (last && (!last.error || !last.error.startsWith('SOURCE_CHANGED'))) return last;
+      if (last && !last.pending && (!last.error || !last.error.startsWith('SOURCE_CHANGED'))) return last;
     }
     await delay(700);
   }
-  return last || {error: 'UPSTREAM_TIMEOUT: page did not become ready; inspect the working tab'};
+  return (last && !last.pending ? last : null) || {error: 'UPSTREAM_TIMEOUT: page did not become ready; inspect the working tab'};
 }
 document.querySelector('#disconnect').onclick = () => { running = false; status.textContent = '正在断开'; };
 document.querySelector('#connect').onclick = async () => {
