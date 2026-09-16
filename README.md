@@ -48,6 +48,10 @@ python web_server.py
 
 ---
 
+## 🏢 后台企业查询
+
+后台左侧「企业查询」支持通过已登录的 Chrome 天眼查账号搜索企业、查看工商资料，并提供扩展下载和浏览器配对。随原有后台启动，无需单独运行 MCP 服务。当前支持搜索第一页及企业详情，查老板和翻页尚未开放。部署与首次配对步骤见 [企业查询说明](docs/company-query.md)。
+
 ## 🤖 内置 Agent 分支版本
 
 > ⚠️ **注意：** 以下三个功能均属于独立的**分支版本**（版本号带 `+agent` 后缀，如 `v4.7.31+agent.x`），**不包含**在本仓库公开版本中。有需要可前往[交流页面](https://wxbot.siverking.online/docs.html?c=%E4%BA%A4%E6%B5%81)或[联系作者](https://www.siverking.online/static/img/siver_wx.jpg)询问获取。
