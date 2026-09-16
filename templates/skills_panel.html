@@ -5,15 +5,16 @@
     <button type="button" id="skills-add" class="btn btn-load">添加 Skill</button>
     <button type="button" id="skills-official" class="btn btn-load">导入天眼一下官方 Skill</button>
     <label class="btn btn-load">导入 Skill（MD / ZIP）<input id="skills-file" type="file" accept=".md,.zip,text/markdown,text/plain,application/zip,application/x-zip-compressed" hidden></label>
-    <p class="cfg-hint">支持 Markdown 文件或 ZIP 技能包（最大 10 MiB）。ZIP 可包含技能文件夹，需有且只有一个 SKILL.md；当前仅导入正文，不保存包内附件。</p>
+    <p class="cfg-hint">支持 Markdown 文件或 ZIP 技能包（最大 10 MiB）。ZIP 可包含技能文件夹，需有且只有一个 SKILL.md；保存时保留完整文件夹结构、脚本及附件。</p>
     <p id="skills-message" role="status" aria-live="polite"></p><div id="skills-list"></div>
   </div>
   <div class="cfg-card" id="skills-editor" hidden>
     <label class="btn btn-load">从 Markdown / ZIP 导入<input id="skills-editor-file" type="file" accept=".md,.zip,text/markdown,text/plain,application/zip,application/x-zip-compressed" hidden></label>
     <label class="cfg-label" for="skills-name">名称</label><input id="skills-name" class="form-control" maxlength="80">
     <label class="cfg-label" for="skills-description">适用场景</label><textarea id="skills-description" class="form-control" maxlength="1000" rows="2"></textarea>
+    <label class="cfg-label" for="skills-files">技能包文件</label><pre id="skills-files" style="max-height:240px;overflow:auto;white-space:pre-wrap"></pre>
     <label class="cfg-label" for="skills-content">Skill Markdown 内容</label><textarea id="skills-content" class="form-control" maxlength="60000" rows="16" spellcheck="false"></textarea>
-    <p class="cfg-hint">保留 Markdown 原文。引用的脚本和附件不会自动安装；启用前请检查内容，不要写入 API 密钥。最多保存 50 个，启用内容总计最多 80000 字。</p>
+    <p class="cfg-hint">技能以独立文件夹保存，编辑正文会保留其他文件。启用后加载正文及限额内的文本附件，脚本与二进制资源会保留，但不会自动执行或解析；启用前请检查内容，不要写入 API 密钥。最多保存 50 个，启用内容总计最多 80000 字。</p>
     <label><input type="checkbox" id="skills-enabled">启用</label>
     <button type="button" id="skills-save" class="btn btn-save">保存</button><button type="button" id="skills-cancel" class="btn btn-load">取消</button>
   </div>

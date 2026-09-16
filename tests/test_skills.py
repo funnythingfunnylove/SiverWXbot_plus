@@ -161,3 +161,124 @@ def test_zip_request_size_limit(skill_import_client):
     result = client.post('/api/skills/import', headers={'X-Skill-Request': '1'},
                          data={'file': (io.BytesIO(b'x' * (11 * 1024 * 1024)), 'large.zip')})
     assert result.status_code == 413
+
+
+def test_package_files_survive_save_edit_toggle_and_restart(skill_import_client):
+    client, store = skill_import_client
+    h = {'X-Skill-Request': '1'}
+    binary = bytes(range(256))
+    payload = skill_zip([('demo/SKILL.md', '# Demo\nRead references/guide.md'),
+                         ('demo/references/guide.md', 'REFERENCE_MARKER'),
+                         ('demo/assets/image.bin', binary),
+                         ('demo/scripts/run.py', 'print("SCRIPT_MARKER")'),
+                         ('demo/empty/', '')])
+    preview = client.post('/api/skills/import', headers=h,
+                          data={'file': (io.BytesIO(payload), 'demo.zip')}).json['skill']
+    token = preview['import_token']
+    assert (store.staging / token / 'package/demo/assets/image.bin').read_bytes() == binary
+    assert len(preview['files']) == 4
+    response = client.post('/api/skills', headers=h, json=preview)
+    assert response.status_code == 200
+    ident = response.json['id']
+    assert not (store.staging / token).exists()
+    restarted = SkillStore(store.path)
+    skill = restarted.read()['skills'][0]
+    original = restarted.package_dir(skill)
+    assert (original / 'demo/assets/image.bin').read_bytes() == binary
+    assert (original / 'demo/empty').is_dir()
+    restarted.save({'id': ident, 'content': '# Edited', 'enabled': True})
+    skill = restarted.read()['skills'][0]
+    folder = restarted.package_dir(skill)
+    assert not original.exists()
+    assert (folder / skill['entry']).read_text() == '# Edited'
+    assert (folder / 'demo/assets/image.bin').read_bytes() == binary
+    assert (folder / 'demo/scripts/run.py').read_text() == 'print("SCRIPT_MARKER")'
+    instructions = restarted.instructions()
+    assert 'REFERENCE_MARKER' in instructions
+    assert 'demo/assets/image.bin' in instructions
+    assert 'SCRIPT_MARKER' not in instructions
+    restarted.save({'id': ident, 'enabled': False})
+    assert restarted.instructions() == ''
+    assert len(restarted.read()['skills'][0]['files']) == 4
+    restarted.delete(ident)
+    assert not folder.parent.exists()
+
+
+def test_cancel_and_invalid_package_cleanup(skill_import_client):
+    client, store = skill_import_client
+    h = {'X-Skill-Request': '1'}
+    response = client.post('/api/skills/import', headers=h,
+                           data={'file': (io.BytesIO(skill_zip([('SKILL.md', '# Demo')])), 'demo.zip')})
+    skill = response.json['skill']
+    token = skill['import_token']
+    assert client.delete('/api/skills/import/' + token, headers=h).status_code == 200
+    assert not (store.staging / token).exists()
+    assert client.post('/api/skills', json=skill, headers=h).status_code == 400
+    assert client.post('/api/skills/import', headers=h,
+                       data={'file': (io.BytesIO(b'bad'), 'demo.zip')}).status_code == 400
+    assert list(store.staging.iterdir()) == []
+
+
+def test_legacy_folder_migration_and_failed_save_preserves_package(tmp_path, monkeypatch):
+    store = SkillStore(str(tmp_path / 'skills.json'))
+    ident = 'a' * 32
+    store.write({'skills': [{'id': ident, 'name': 'Legacy', 'description': 'Demo',
+                             'content': '# Original', 'enabled': True}]})
+    skill = store.read()['skills'][0]
+    folder = store.package_dir(skill)
+    assert (folder / 'SKILL.md').read_text() == '# Original'
+    assert skill['enabled'] is True
+    def fail_write(data):
+        raise OSError('disk full')
+    monkeypatch.setattr(store, 'write', fail_write)
+    with pytest.raises(OSError):
+        store.save({'id': ident, 'content': '# Changed'})
+    assert store.read()['skills'][0]['content'] == '# Original'
+    assert (folder / 'SKILL.md').read_text() == '# Original'
+    assert list(folder.parent.iterdir()) == [folder]
+
+
+@pytest.mark.parametrize('entries', [
+    [('SKILL.md', '# Demo'), ('assets/a', 'a'), ('assets/A', 'b')],
+    [('SKILL.md', '# Demo'), ('assets', 'file'), ('assets/a', 'conflict')],
+    [('SKILL.md', '# Demo'), ('assets/CON.txt', 'reserved')],
+    [('SKILL.md', '# Demo'), ('assets/a', 'a'), ('Assets/b', 'b')],
+])
+def test_package_path_conflicts(skill_import_client, entries):
+    client, store = skill_import_client
+    result = client.post('/api/skills/import', headers={'X-Skill-Request': '1'},
+                         data={'file': (io.BytesIO(skill_zip(entries)), 'demo.zip')})
+    assert result.status_code == 400
+    assert list(store.staging.iterdir()) == []
+
+
+def test_reference_budget_preserves_unloaded_files(skill_import_client):
+    client, store = skill_import_client
+    payload = skill_zip([('SKILL.md', '# Demo'), ('references/a.txt', 'a' * 50000),
+                         ('references/b.md', 'b' * 40000), ('references/c.txt', b'\xff')])
+    skill = client.post('/api/skills/import', headers={'X-Skill-Request': '1'},
+                        data={'file': (io.BytesIO(payload), 'demo.zip')}).json['skill']
+    skill['enabled'] = True
+    store.save(skill)
+    instructions = store.instructions()
+    assert 'a' * 50000 in instructions
+    assert 'b' * 40000 not in instructions
+    saved = store.read()['skills'][0]
+    assert (store.package_dir(saved) / 'references/b.md').stat().st_size == 40000
+    assert (store.package_dir(saved) / 'references/c.txt').read_bytes() == b'\xff'
+
+
+def test_package_symlink_rejected(skill_import_client):
+    client, store = skill_import_client
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, 'w') as archive:
+        archive.writestr('SKILL.md', '# Demo')
+        link = zipfile.ZipInfo('references/link')
+        link.create_system = 3
+        link.external_attr = 0o120777 << 16
+        archive.writestr(link, '/etc/passwd')
+    result = client.post('/api/skills/import', headers={'X-Skill-Request': '1'},
+                         data={'file': (io.BytesIO(buf.getvalue()), 'demo.zip')})
+    assert result.status_code == 400
+    assert '符号链接' in result.json['message']
+    assert list(store.staging.iterdir()) == []
