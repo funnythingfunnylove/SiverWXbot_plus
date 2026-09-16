@@ -10,8 +10,12 @@ from urllib.parse import urlsplit
 
 
 DEFAULTS = {"enabled": False, "max_rounds": 6, "total_timeout": 120, "servers": []}
-TYC_URL = "https://mcp.tianyancha.com/mcp"
+TYC_URL = "http://127.0.0.1:18766/mcp"
 HRZH_URL = "https://hrzh.cc/mcp"
+
+
+def is_official_tyc_url(url):
+    return (urlsplit(url).hostname or "").rstrip(".") == "mcp.tianyancha.com"
 
 
 def string_list(value, label):
@@ -47,15 +51,8 @@ def validate_server(data, previous=None):
     if kind == "tianyancha":
         data = dict(data)
         data["url"] = TYC_URL
-        key = data.get("key")
-        if key is not None:
-            if not isinstance(key, str) or not re.fullmatch(r"[!-~]{1,8192}", key):
-                raise ValueError("天眼 AI 密钥必须是非空单行文本")
-            data["headers"] = {"Authorization": key}
-        else:
-            data["headers"] = previous.get("headers", {})
-        if not data["headers"].get("Authorization"):
-            raise ValueError("请填写天眼 AI 密钥")
+        # Website authentication stays in Chrome; never forward an old API key.
+        data["headers"] = {}
     if personal:
         data = dict(data)
         data["url"] = HRZH_URL
@@ -82,6 +79,8 @@ def validate_server(data, previous=None):
     parsed = urlsplit(url.strip())
     if parsed.scheme not in ("http", "https") or not parsed.hostname or parsed.username or parsed.password or parsed.fragment:
         raise ValueError("请填写 HTTP(S) MCP 地址；凭据请放入请求头")
+    if is_official_tyc_url(url.strip()):
+        raise ValueError("天眼查已改用网页桥接，请添加天眼查网页 MCP")
     try:
         parsed.port
     except ValueError as exc:
@@ -131,6 +130,12 @@ class MCPConfigStore:
                 data = json.load(f)
             if not isinstance(data, dict) or not isinstance(data.get("servers"), list):
                 raise ValueError("MCP 配置文件损坏，请检查 config/mcp.json")
+            for server in data["servers"]:
+                if is_official_tyc_url(server.get("url", "")):
+                    server.update(enabled=False, headers={}, allowed_tools=[])
+                    if server.get("kind") == "tianyancha":
+                        server.update(url=TYC_URL, name="天眼查网页 MCP", timeout=60)
+                    server["migration_notice"] = "原官方接入已停用，请启动网页桥接、重新选择工具并保存。"
             return {**copy.deepcopy(DEFAULTS), **data}
 
     def public(self):

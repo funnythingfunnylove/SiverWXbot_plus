@@ -39,7 +39,7 @@
   el('add').onclick=()=>action(async()=>{await discardImport();edit();});
   el('cancel').onclick=()=>action(async()=>{await discardImport();el('editor').hidden=true;});
   el('save').onclick=()=>action(async()=>{await request('','POST',{...(editing?{id:editing}:{}),...(importing?{import_token:importing}:{}),name:el('name').value,description:el('description').value,content:el('content').value,enabled:el('enabled').checked});importing=null;el('editor').hidden=true;await load();el('message').textContent='已保存，下次对话生效。';});
-  el('official').onclick=()=>action(async()=>{el('message').textContent='正在读取官方 Skill…';const r=await request('/official-tianyancha','POST',{});await discardImport();edit(r.skill);el('message').textContent='已读取官方原文，请检查并保存。官方 MCP 需在 MCP 工具页配置天眼 AI 密钥。';});
+  el('official').onclick=()=>action(async()=>{el('message').textContent='正在读取官方 Skill…';const r=await request('/official-tianyancha','POST',{});await discardImport();edit(r.skill);el('message').textContent='已读取官方原文，请检查并保存。查询需在 MCP 工具页配置天眼查网页桥接；官方调用方式不适用于此环境。';});
   for (const id of ['file', 'editor-file']) {
     el(id).onchange=()=>action(async()=>{
       try {

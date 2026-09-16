@@ -1,0 +1,7 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>天眼查 MCP 桥接</title>
+<body><h1>天眼查 MCP 本地桥接</h1>
+<p>输入本机服务生成的配对令牌。连接期间保留此页面；查询会使用一个专用天眼查标签页。</p>
+<label>后台桥接地址 <input id="endpoint" type="url" size="64" value="http://127.0.0.1:18765"></label><p>默认连接本机独立服务。令牌从 integrations/tianyancha_mcp/.bridge-token 文件读取。</p>
+<label>配对令牌 <input id="token" type="password" autocomplete="off" size="48"></label>
+<button id="connect">连接</button><button id="disconnect">断开</button>
+<p id="status" role="status">未连接</p><script src="extract.js"></script><script src="bridge.js"></script></body></html>

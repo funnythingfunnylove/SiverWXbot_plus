@@ -8,17 +8,26 @@ from skill_manager import SkillStore, register_skill_routes
 from mcp_config import MCPConfigStore, TYC_URL
 
 
-def test_official_key_fixed_endpoint_preserved_redacted(tmp_path):
-    store=MCPConfigStore(str(tmp_path/'mcp.json'))
-    ident=store.save({'kind':'tianyancha','name':'天眼查','key':'test-secret','url':'https://wrong.test'})
-    saved=store.read()['servers'][0]
-    assert saved['url']==TYC_URL
-    assert saved['headers']=={'Authorization':'test-secret'}
-    public=store.public()['servers'][0]
-    assert 'test-secret' not in json.dumps(public)
-    store.save(public)
-    assert store.read()['servers'][0]['headers']==saved['headers']
-    with pytest.raises(ValueError): store.save({'kind':'tianyancha','name':'x','key':'bad\nkey'})
+def test_browser_endpoint_drops_official_credentials(tmp_path):
+    store = MCPConfigStore(str(tmp_path/'mcp.json'))
+    store.save({'kind': 'tianyancha', 'name': '天眼查', 'key': 'old-secret', 'url': 'https://wrong.test'})
+    saved = store.read()['servers'][0]
+    assert saved['url'] == TYC_URL
+    assert saved['headers'] == {}
+    assert 'old-secret' not in (tmp_path/'mcp.json').read_text()
+    with pytest.raises(ValueError):
+        store.save({'name': 'official', 'url': 'https://mcp.tianyancha.com/mcp'})
+
+
+def test_legacy_official_config_disabled_on_read(tmp_path):
+    path = tmp_path/'mcp.json'
+    path.write_text(json.dumps({'enabled': True, 'servers': [
+        {'id': 'legacy', 'kind': 'tianyancha', 'url': 'https://mcp.tianyancha.com/mcp',
+         'enabled': True, 'headers': {'Authorization': 'old-secret'}, 'allowed_tools': ['search_companies']}]}))
+    server = MCPConfigStore(str(path)).read()['servers'][0]
+    assert server['url'] == TYC_URL
+    assert not server['enabled'] and not server['headers'] and not server['allowed_tools']
+    assert server['migration_notice']
 
 
 def test_skill_toggle_and_validation(tmp_path):

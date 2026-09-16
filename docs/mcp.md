@@ -160,6 +160,6 @@ python -m pytest tests -q
 
 模型地址填写 API 基址，例如 `https://api.example.com/codex/v1`，SDK 自动追加 `/responses`。不要填写完整的 `/responses` 或 `/chat/completions` 地址。Responses 请求采用非流式、`store=false`；工具循环保留返回的推理项及加密推理上下文，并用 `call_id` 配对工具结果。
 
-## 天眼查官方 MCP 与 Skill
+## 天眼查网页 MCP 与 Skill
 
-内置天眼查服务只需填写天眼 AI 密钥，接入官方 Streamable HTTP 地址。Skill 导入、启停及助手使用范围见 [Skill 管理说明](skills.md)。旧 Chrome 企业查询桥接已移除。
+内置服务连接本机 `http://127.0.0.1:18766/mcp`，由 Chrome 扩展读取网站并交给标准 MCP 服务。无需天眼 AI 密钥，不调用官方 MCP。先按 [网页桥接说明](company-query.md) 启动服务并配对扩展，再在面板发现工具和授权会话。Skill 导入和启停见 [Skill 管理说明](skills.md)。

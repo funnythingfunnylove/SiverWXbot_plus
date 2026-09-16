@@ -12,7 +12,7 @@ import threading
 from contextlib import AsyncExitStack, asynccontextmanager
 from datetime import timedelta
 
-from mcp_config import permits, HRZH_URL
+from mcp_config import permits, HRZH_URL, is_official_tyc_url
 
 
 class MCPError(Exception):
@@ -42,6 +42,8 @@ def safe_error(exc):
 
 @asynccontextmanager
 async def connect_server(server):
+    if is_official_tyc_url(server["url"]):
+        raise MCPError("天眼查官方调用已停用，请配置网页桥接 MCP")
     import httpx
     from mcp import ClientSession
     from mcp.client.streamable_http import streamable_http_client

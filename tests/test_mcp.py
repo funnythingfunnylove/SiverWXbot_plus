@@ -367,3 +367,90 @@ def test_person_real_http_identity_and_route(store):
         server.should_exit = True
         thread.join(timeout=5)
         sock.close()
+
+
+
+# Exercise the actual HTTP MCP transport with a simulated browser worker.
+import asyncio
+import threading
+import time
+
+from conftest import serve
+from integrations.tianyancha_mcp.bridge import Bridge
+from integrations.tianyancha_mcp.server import create_mcp
+from mcp_manager import connect_server
+
+
+def test_http_company_roundtrip():
+    bridge = Bridge('fixture-token', timeout=2)
+    app = create_mcp(bridge).streamable_http_app()
+    server, thread, sock, port = serve(app)
+    done = threading.Event()
+    jobs = []
+
+    def browser():
+        while not done.is_set():
+            job = bridge.poll()
+            if job:
+                jobs.append(job)
+                bridge.complete(job['id'], {'status': 'ok', 'data': {'company_id': job['company_id'],
+                    'credit_code': 'fixture-credit'}, 'source': {'url': job['url'], 'access_method': 'browser'}})
+            done.wait(.005)
+
+    worker = threading.Thread(target=browser)
+    worker.start()
+
+    async def run():
+        async with connect_server({'url': f'http://127.0.0.1:{port}/mcp', 'headers': {}, 'timeout': 5}) as session:
+            listed = await session.list_tools()
+            assert all(t.annotations.readOnlyHint for t in listed.tools)
+            assert all(t.outputSchema for t in listed.tools)
+            capabilities = await session.call_tool('get_company_capabilities', {'company_id': '123'})
+            assert capabilities.structuredContent['tools'][0]['tool_name'] == 'get_company_basic_profile'
+            assert jobs == []  # Capability discovery does not browse or claim account access.
+            result = await session.call_tool('get_company_basic_profile', {'company_id': '123'})
+            assert not result.isError
+            assert result.structuredContent['data']['credit_code'] == 'fixture-credit'
+            assert jobs[0]['url'] == 'https://www.tianyancha.com/company/123'
+            invalid = await session.call_tool('search_companies', {'query': 'test', 'limit': 21})
+            assert invalid.isError
+            assert len(jobs) == 1
+
+    try:
+        asyncio.run(run())
+    finally:
+        done.set()
+        worker.join(3)
+        server.should_exit = True
+        thread.join(5)
+        sock.close()
+
+
+def test_busy_and_wrong_source():
+    bridge = Bridge('fixture-token', timeout=2)
+    bridge.poll()
+    failures = []
+
+    def query():
+        try:
+            bridge.query('get_company', 'https://www.tianyancha.com/company/123')
+        except RuntimeError as exc:
+            failures.append(str(exc))
+
+    worker = threading.Thread(target=query)
+    worker.start()
+    try:
+        job = None
+        for _ in range(200):
+            job = bridge.poll()
+            if job:
+                break
+            time.sleep(.005)
+        assert job
+        import pytest
+        with pytest.raises(RuntimeError, match='BUSY'):
+            bridge.query('get_company', 'https://www.tianyancha.com/company/456')
+        bridge.complete(job['id'], {'source': {'url': 'https://www.tianyancha.com/company/456'}})
+    finally:
+        worker.join(3)
+    assert failures and 'SOURCE_CHANGED' in failures[0]

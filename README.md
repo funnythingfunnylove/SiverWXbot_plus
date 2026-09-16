@@ -48,9 +48,9 @@ python web_server.py
 
 ---
 
-## 🏢 天眼查官方 MCP 与 Skill 管理
+## 🏢 天眼查网页桥接 MCP 与 Skill 管理
 
-后台「MCP 工具」内置天眼查官方接入，填写天眼 AI 密钥后测试连接，选择工具和授权会话即可使用。无需 Chrome 扩展或网页登录。新增「Skill 管理」，支持 Markdown 导入、编辑、启停和导入天眼一下官方 Skill；启用内容在下一次 OpenAI 兼容助手对话中生效。详见 [Skill 与天眼查接入](docs/skills.md)。
+后台「MCP 工具」内置天眼查网页 MCP：通过本机 Chrome 登录态读取网页，再由独立 FastMCP 服务提供搜索、工商画像与能力发现工具。不需要天眼 AI 密钥，不调用官方 MCP；官方 Skill 仅作业务流程参考。支持 Skill Markdown/ZIP 导入、编辑及启停。部署见 [网页桥接说明](docs/company-query.md)，Skill 见 [管理说明](docs/skills.md)。
 
 ## 🤖 内置 Agent 分支版本
 
