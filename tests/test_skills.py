@@ -1,4 +1,6 @@
 import json
+import io
+import zipfile
 from functools import wraps
 import pytest
 from flask import Flask, session, jsonify
@@ -77,3 +79,85 @@ def test_official_import_returns_preview_without_enabling(tmp_path, monkeypatch)
     assert result.json['skill']['enabled'] is False
     assert 'MCP 模式' in result.json['skill']['content']
     assert store.read()['skills']==[]
+
+
+def skill_zip(entries):
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, 'w', zipfile.ZIP_DEFLATED) as archive:
+        for name, content in entries:
+            archive.writestr(name, content)
+    return buffer.getvalue()
+
+
+@pytest.fixture
+def skill_import_client(tmp_path):
+    app = Flask(__name__)
+    store = SkillStore(str(tmp_path / 'skills.json'))
+    register_skill_routes(app, lambda fn: fn, store)
+    return app.test_client(), store
+
+
+@pytest.mark.parametrize('entry', ['SKILL.md', 'demo/SKILL.md', 'repo/skills/demo/skill.md'])
+def test_zip_import_preview_and_save(skill_import_client, entry):
+    client, store = skill_import_client
+    content = '---\nname: demo\n---\n# 中文技能\n使用 MCP。'
+    payload = skill_zip([(entry, content), ('demo/references/guide.md', '# Guide'),
+                         ('__MACOSX/demo/._SKILL.md', 'metadata')])
+    result = client.post('/api/skills/import', data={'file': (io.BytesIO(payload), 'demo.zip')},
+                         headers={'X-Skill-Request': '1'})
+    assert result.status_code == 200
+    assert result.json['source'] == entry
+    assert result.json['attachments'] == 1
+    skill = result.json['skill']
+    assert skill['content'] == content
+    assert skill['name'] == 'demo'
+    assert skill['enabled'] is False
+    assert store.read() == {'skills': []}
+    skill['description'] = '测试适用场景'
+    assert client.post('/api/skills', json=skill, headers={'X-Skill-Request': '1'}).status_code == 200
+    assert store.read()['skills'][0]['content'] == content
+    assert store.instructions() == ''
+
+
+def test_markdown_import_and_request_guard(skill_import_client):
+    client, _ = skill_import_client
+    assert client.post('/api/skills/import').status_code == 403
+    headers = {'X-Skill-Request': '1'}
+    assert client.post('/api/skills/import', headers=headers).status_code == 400
+    result = client.post('/api/skills/import', headers=headers,
+                         data={'file': (io.BytesIO(b'\xef\xbb\xbf# Markdown'), 'notes.md')})
+    assert result.status_code == 200
+    assert result.json['skill']['content'] == '# Markdown'
+    assert result.json['skill']['name'] == 'notes'
+    assert result.headers['Cache-Control'] == 'no-store'
+
+
+@pytest.mark.parametrize('filename,payload,message', [
+    ('bad.zip', b'not zip', '无法读取 ZIP'),
+    ('missing.zip', skill_zip([('README.md', 'hello')]), '未找到 SKILL.md'),
+    ('many.zip', skill_zip([('a/SKILL.md', 'a'), ('b/SKILL.md', 'b')]), '多个 SKILL.md'),
+    ('unsafe.zip', skill_zip([('../SKILL.md', 'hello')]), '不安全'),
+    ('unsafe.zip', skill_zip([('C:\\SKILL.md', 'hello')]), '不安全'),
+    ('empty.zip', skill_zip([('SKILL.md', ' ')]), '不能为空'),
+    ('large.zip', skill_zip([('SKILL.md', 'a' * 240001)]), '240000'),
+    ('long.zip', skill_zip([('SKILL.md', 'a' * 60001)]), '60000'),
+    ('utf8.zip', skill_zip([('SKILL.md', b'\xff')]), 'UTF-8'),
+    ('many-files.zip', skill_zip([(str(i), '') for i in range(2001)]), '2000'),
+    ('text.md', b'\xff', 'UTF-8'),
+    ('text.md', b'a' * 240001, '240000'),
+    ('text.txt', b'hello', '.md'),
+])
+def test_import_invalid_files(skill_import_client, filename, payload, message):
+    client, store = skill_import_client
+    result = client.post('/api/skills/import', headers={'X-Skill-Request': '1'},
+                         data={'file': (io.BytesIO(payload), filename)})
+    assert result.status_code == 400
+    assert message in result.json['message']
+    assert store.read() == {'skills': []}
+
+
+def test_zip_request_size_limit(skill_import_client):
+    client, _ = skill_import_client
+    result = client.post('/api/skills/import', headers={'X-Skill-Request': '1'},
+                         data={'file': (io.BytesIO(b'x' * (11 * 1024 * 1024)), 'large.zip')})
+    assert result.status_code == 413

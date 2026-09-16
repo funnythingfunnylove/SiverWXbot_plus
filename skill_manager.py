@@ -1,15 +1,76 @@
 """Administrator-managed Markdown skills; instructions only, never shell execution."""
 import json
+import io
 import os
 import tempfile
 import threading
 import uuid
+import zipfile
+import zlib
 from functools import wraps
+from pathlib import PurePosixPath
 
 from flask import jsonify, request
 
 OFFICIAL_SKILL_URL = 'https://www.tianyancha.com/ai/skills/skill.md'
 _LOCK = threading.RLock()
+MAX_MARKDOWN_BYTES = 240000
+MAX_ARCHIVE_BYTES = 10 * 1024 * 1024
+
+
+def import_skill(upload):
+    """Read an instruction preview without extracting or executing archive files."""
+    filename = (upload.filename or '').replace('\\', '/').rsplit('/', 1)[-1]
+    is_zip = filename.lower().endswith('.zip')
+    if not is_zip and not filename.lower().endswith('.md'):
+        raise ValueError('请选择 .md 文件或 .zip 技能压缩包')
+    limit = MAX_ARCHIVE_BYTES if is_zip else MAX_MARKDOWN_BYTES
+    payload = upload.stream.read(limit + 1)
+    if len(payload) > limit:
+        raise ValueError('ZIP 压缩包不能超过 10 MiB' if is_zip else 'Markdown 文件不能超过 240000 字节')
+    source = filename
+    attachments = 0
+    name = filename.rsplit('.', 1)[0]
+    if is_zip:
+        try:
+            with zipfile.ZipFile(io.BytesIO(payload)) as archive:
+                entries = archive.infolist()
+                if len(entries) > 2000 or sum(item.file_size for item in entries) > 50 * 1024 * 1024:
+                    raise ValueError('压缩包展开后不能超过 50 MiB 或 2000 个条目')
+                files = []
+                for item in entries:
+                    path = PurePosixPath(item.filename.replace('\\', '/'))
+                    if path.is_absolute() or '..' in path.parts or any(':' in part for part in path.parts):
+                        raise ValueError('压缩包包含不安全的文件路径')
+                    if item.is_dir() or '__MACOSX' in path.parts or path.name.startswith('._') or path.name == '.DS_Store':
+                        continue
+                    files.append((item, path))
+                candidates = [(item, path) for item, path in files if path.name.lower() == 'skill.md']
+                if not candidates:
+                    raise ValueError('压缩包中未找到 SKILL.md，请选择包含该文件的技能包')
+                if len(candidates) != 1:
+                    raise ValueError('压缩包包含多个 SKILL.md，请每次导入一个技能包')
+                item, path = candidates[0]
+                if item.file_size > MAX_MARKDOWN_BYTES:
+                    raise ValueError('SKILL.md 文件不能超过 240000 字节')
+                with archive.open(item) as stream:
+                    payload = stream.read(MAX_MARKDOWN_BYTES + 1)
+                if len(payload) > MAX_MARKDOWN_BYTES:
+                    raise ValueError('SKILL.md 文件不能超过 240000 字节')
+                source = str(path)
+                name = path.parent.name or name
+                attachments = len(files) - 1
+        except (zipfile.BadZipFile, zipfile.LargeZipFile, RuntimeError, NotImplementedError, EOFError, zlib.error) as exc:
+            raise ValueError('无法读取 ZIP，请检查压缩包是否损坏、加密或使用了不支持的压缩格式') from exc
+    try:
+        content = payload.decode('utf-8-sig')
+    except UnicodeDecodeError as exc:
+        raise ValueError('Skill Markdown 必须使用 UTF-8 编码') from exc
+    if not content.strip() or len(content) > 60000:
+        raise ValueError('Skill 内容不能为空，且不能超过 60000 字')
+    return {'skill': {'name': name[:80], 'description': '请填写此 Skill 的适用场景',
+                      'content': content, 'enabled': False},
+            'source': source, 'attachments': attachments}
 
 
 class SkillStore:
@@ -78,7 +139,8 @@ def register_skill_routes(app, login_required, store):
         def wrapped(*args, **kwargs):
             if request.method != 'GET' and request.headers.get('X-Skill-Request') != '1':
                 return jsonify(status='error', message='请从管理面板操作'), 403
-            if request.content_length and request.content_length > 400000:
+            limit = MAX_ARCHIVE_BYTES + 65536 if request.endpoint == 'skills_import' else 400000
+            if request.content_length and request.content_length > limit:
                 return jsonify(status='error', message='Skill 文件过大'), 413
             try:
                 response = app.make_response(fn(*args, **kwargs))
@@ -99,6 +161,14 @@ def register_skill_routes(app, login_required, store):
     @guarded
     def skills_save():
         return jsonify(status='success', id=store.save(request.get_json(silent=True)))
+
+    @app.post('/api/skills/import')
+    @guarded
+    def skills_import():
+        upload = request.files.get('file')
+        if upload is None or not upload.filename:
+            raise ValueError('请选择要导入的 Markdown 文件或 ZIP 技能压缩包')
+        return jsonify(status='success', **import_skill(upload))
 
     @app.delete('/api/skills/<ident>')
     @guarded
