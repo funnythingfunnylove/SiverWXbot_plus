@@ -61,6 +61,10 @@
     editingId = server.id || null;
     editingKind = server.kind || 'service';
     const personal = editingKind === 'hrzh_person';
+    const tyc = editingKind === 'tianyancha';
+    el('mcp-tyc-fields').hidden = !tyc;
+    el('mcp-tyc-key').value = '';
+    for (const id of ['mcp-url', 'mcp-headers', 'mcp-clear-headers']) el(id).closest('.mb-3').hidden = tyc;
     el('mcp-person-fields').hidden = !personal;
     el('mcp-service-fields').hidden = personal;
     el('mcp-service-permissions').hidden = personal;
@@ -87,6 +91,10 @@
       result.allowed_chats = result.chat ? [result.chat] : [];
       result.allowed_groups = [];
       if (el('mcp-person-key').value) result.key = el('mcp-person-key').value;
+      return result;
+    }
+    if (editingKind === 'tianyancha') {
+      if (el('mcp-tyc-key').value) result.key = el('mcp-tyc-key').value;
       return result;
     }
     const text = el('mcp-headers').value.trim();
@@ -121,9 +129,10 @@
       row.append(text, change, remove); list.append(row);
     }
   }
+  el('mcp-add-tyc').onclick = () => edit({kind: 'tianyancha', name: '天眼查官方 MCP', url: 'https://mcp.tianyancha.com/mcp'});
   el('mcp-add-person').onclick = () => edit({kind: 'hrzh_person', name: '项目管理系统'});
   el('mcp-add').onclick = () => edit();
-  el('mcp-cancel').onclick = () => { el('mcp-editor').hidden = true; el('mcp-headers').value = ''; el('mcp-person-key').value = ''; revision++; };
+  el('mcp-cancel').onclick = () => { el('mcp-editor').hidden = true; el('mcp-headers').value = ''; el('mcp-person-key').value = ''; el('mcp-tyc-key').value = ''; revision++; };
   el('mcp-editor').addEventListener('input', () => revision++);
   el('mcp-save-settings').onclick = () => action(async () => {
     await request('settings', 'POST', {enabled: el('mcp-enabled').checked, max_rounds: Number(el('mcp-rounds').value), total_timeout: Number(el('mcp-total-timeout').value)});
@@ -152,7 +161,7 @@
       throw new Error('启用服务前，请选择工具并填写至少一个完整的授权会话。');
     }
     await request('servers', 'POST', data);
-    el('mcp-headers').value = ''; el('mcp-person-key').value = ''; el('mcp-editor').hidden = true; revision++;
+    el('mcp-headers').value = ''; el('mcp-person-key').value = ''; el('mcp-tyc-key').value = ''; el('mcp-editor').hidden = true; revision++;
     await load(); status('MCP 服务已保存。请确认总开关已启用，并在授权会话中测试。');
   });
   action(load);

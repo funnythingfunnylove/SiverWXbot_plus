@@ -1335,6 +1335,13 @@ class OpenAIAPI:
         model = model or self.DS_NOW_MOD
         prompt = self.config.prompt if prompt is None else prompt
         items = [{"role": "system", "content": prompt or ""}]
+        if conversation:
+            from skill_manager import SkillStore
+            import os
+            skill_path = os.path.join(os.path.dirname(get_mcp_manager().store.path), "skills.json")
+            skill_instructions = SkillStore(skill_path).instructions()
+            if skill_instructions:
+                items.append({"role": "system", "content": skill_instructions})
         items.extend(self._build_history_messages(history))
         content = message
         if image_path or image_url:

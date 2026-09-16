@@ -10,6 +10,7 @@ from urllib.parse import urlsplit
 
 
 DEFAULTS = {"enabled": False, "max_rounds": 6, "total_timeout": 120, "servers": []}
+TYC_URL = "https://mcp.tianyancha.com/mcp"
 HRZH_URL = "https://hrzh.cc/mcp"
 
 
@@ -38,11 +39,23 @@ def validate_server(data, previous=None):
         raise ValueError("服务配置必须是 JSON 对象")
     previous = previous or {}
     kind = data.get("kind", previous.get("kind", "service"))
-    if kind not in ("service", "hrzh_person"):
+    if kind not in ("service", "hrzh_person", "tianyancha"):
         raise ValueError("未知 MCP 服务类型")
     if previous and kind != previous.get("kind", "service"):
         raise ValueError("不能修改服务类型，请添加新配置")
     personal = kind == "hrzh_person"
+    if kind == "tianyancha":
+        data = dict(data)
+        data["url"] = TYC_URL
+        key = data.get("key")
+        if key is not None:
+            if not isinstance(key, str) or not re.fullmatch(r"[!-~]{1,8192}", key):
+                raise ValueError("天眼 AI 密钥必须是非空单行文本")
+            data["headers"] = {"Authorization": key}
+        else:
+            data["headers"] = previous.get("headers", {})
+        if not data["headers"].get("Authorization"):
+            raise ValueError("请填写天眼 AI 密钥")
     if personal:
         data = dict(data)
         data["url"] = HRZH_URL
@@ -84,7 +97,7 @@ def validate_server(data, previous=None):
         if key.lower() in {"host", "content-length", "connection", "transfer-encoding", "mcp-session-id", "mcp-protocol-version"}:
             raise ValueError("不能覆盖 HTTP/MCP 协议请求头")
     result = {
-        "kind": "hrzh_person" if personal else "service",
+        "kind": kind,
         "id": previous.get("id", uuid.uuid4().hex),
         "name": name.strip(), "url": url.strip(), "headers": headers,
         "enabled": boolean(data.get("enabled", False), "启用状态"),

@@ -279,3 +279,21 @@ def test_admin_private_reminders_match_existing_admin_routing(modules):
     assert not bot._reminder_recipient_allowed("Other")
     bot.config.group = ["Admin"]
     assert not bot._reminder_recipient_allowed("Admin")
+
+
+def test_enabled_skill_reaches_model_and_disable_removes_it(modules, manager, live_model, monkeypatch):
+    from skill_manager import SkillStore
+    core, _ = modules
+    monkeypatch.setattr(core, 'get_mcp_manager', lambda: manager)
+    skills = SkillStore(str(Path(manager.store.path).parent / 'skills.json'))
+    ident = skills.save({'name':'Evidence','description':'Verification','content':'SKILL_EVIDENCE_MARKER','enabled':True})
+    api = core.OpenAIAPI(SimpleNamespace(model1='fixture', api_key='fixture', base_url=live_model.url, prompt='Answer'))
+    context = {'chat':'Alice','sender':'Alice','is_group':False}
+    try:
+        api.chat('验证企业', conversation=context)
+        assert 'SKILL_EVIDENCE_MARKER' in json.dumps(live_model.requests[-1]['input'])
+        skills.save({'id':ident,'enabled':False})
+        api.chat('验证企业', conversation=context)
+        assert 'SKILL_EVIDENCE_MARKER' not in json.dumps(live_model.requests[-1]['input'])
+    finally:
+        api.client.close()

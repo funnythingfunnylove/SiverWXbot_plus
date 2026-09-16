@@ -24,11 +24,13 @@
     <div id="mcp-servers" class="mb-3">正在加载…</div>
     <p class="cfg-hint">内置项目管理系统 https://hrzh.cc/mcp：每个微信私聊用户绑定自己的 Key，按该 Key 的实际权限获取工具。</p>
     <button type="button" class="btn btn-save" id="mcp-add-person">添加项目管理用户</button>
+    <button type="button" class="btn btn-save" id="mcp-add-tyc">添加天眼查官方 MCP</button>
     <button type="button" class="btn btn-load" id="mcp-add">添加 MCP 服务</button>
   </div>
   <div class="cfg-card" id="mcp-editor" hidden>
     <div class="cfg-card-header"><i class="bi bi-pencil"></i><h5 id="mcp-editor-title">添加 MCP 服务</h5></div>
     <div class="mb-3"><label class="cfg-label" for="mcp-name">服务名称</label><input class="form-control" id="mcp-name" maxlength="80" placeholder="例如：项目进度查询"></div>
+    <div id="mcp-tyc-fields" hidden><label for="mcp-tyc-key">天眼 AI 密钥</label><input class="form-control" id="mcp-tyc-key" type="password" autocomplete="new-password"><p class="cfg-hint">官方地址已内置。编辑时留空保留密钥；测试连接后选择工具及授权会话。密钥不会回显或发送给模型。</p></div>
     <div id="mcp-person-fields" hidden>
       <div class="mb-3"><label class="cfg-label" for="mcp-person-chat">授权微信用户（私聊窗口全名）</label><input class="form-control" id="mcp-person-chat" maxlength="256" placeholder="需与监听窗口名称完全一致"></div>
       <div class="mb-3"><label class="cfg-label" for="mcp-person-key">该用户的项目管理 Key</label><input class="form-control" type="password" id="mcp-person-key" autocomplete="new-password" spellcheck="false" placeholder="只填写 Key，不带 Bearer 前缀"><p class="cfg-hint" id="mcp-person-hint"></p></div>

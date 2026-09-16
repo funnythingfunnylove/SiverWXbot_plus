@@ -385,8 +385,8 @@ def login_required(f):
 from mcp_manager import get_mcp_manager
 from mcp_routes import register_mcp_routes
 register_mcp_routes(app, login_required, get_mcp_manager())
-from company_routes import register_company_routes
-register_company_routes(app, login_required, extension_dir=resource_path("integrations/tianyancha_mcp/extension"))
+from skill_manager import SkillStore, register_skill_routes
+register_skill_routes(app, login_required, SkillStore(os.path.join(base_dir(), "config", "skills.json")))
 
 def log_server(level, msg):
     timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')

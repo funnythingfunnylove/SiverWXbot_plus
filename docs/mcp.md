@@ -159,3 +159,7 @@ python -m pytest tests -q
 本功能使用 [MCP Python SDK v1 客户端接口](https://py.sdk.modelcontextprotocol.io/v1/)，依赖限定 `<2`，避免 SDK 大版本变更影响 Windows 更新。
 
 模型地址填写 API 基址，例如 `https://api.example.com/codex/v1`，SDK 自动追加 `/responses`。不要填写完整的 `/responses` 或 `/chat/completions` 地址。Responses 请求采用非流式、`store=false`；工具循环保留返回的推理项及加密推理上下文，并用 `call_id` 配对工具结果。
+
+## 天眼查官方 MCP 与 Skill
+
+内置天眼查服务只需填写天眼 AI 密钥，接入官方 Streamable HTTP 地址。Skill 导入、启停及助手使用范围见 [Skill 管理说明](skills.md)。旧 Chrome 企业查询桥接已移除。

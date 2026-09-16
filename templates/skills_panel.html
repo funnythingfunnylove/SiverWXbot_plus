@@ -1,0 +1,19 @@
+<div class="config-panel" id="tab-skills">
+  <div class="cfg-card">
+    <div class="cfg-card-header"><i class="bi bi-journal-code"></i><h5>Skill 管理</h5></div>
+    <p class="cfg-hint">启用的 Skill 在下一次 OpenAI 兼容助手对话中生效（含图片对话），由助手按问题匹配使用。Skill 是业务指引，不会授予 MCP 权限或执行本机命令；不作用于 Dify / Coze / DusAPI。</p>
+    <button type="button" id="skills-add" class="btn btn-load">添加 Skill</button>
+    <button type="button" id="skills-official" class="btn btn-load">导入天眼一下官方 Skill</button>
+    <label class="btn btn-load">导入 SKILL.md<input id="skills-file" type="file" accept=".md,text/markdown,text/plain" hidden></label>
+    <p id="skills-message" role="status" aria-live="polite"></p><div id="skills-list"></div>
+  </div>
+  <div class="cfg-card" id="skills-editor" hidden>
+    <label class="cfg-label" for="skills-name">名称</label><input id="skills-name" class="form-control" maxlength="80">
+    <label class="cfg-label" for="skills-description">适用场景</label><textarea id="skills-description" class="form-control" maxlength="1000" rows="2"></textarea>
+    <label class="cfg-label" for="skills-content">Skill Markdown 内容</label><textarea id="skills-content" class="form-control" maxlength="60000" rows="16" spellcheck="false"></textarea>
+    <p class="cfg-hint">保留 Markdown 原文。引用的脚本和附件不会自动安装；启用前请检查内容，不要写入 API 密钥。最多保存 50 个，启用内容总计最多 80000 字。</p>
+    <label><input type="checkbox" id="skills-enabled">启用</label>
+    <button type="button" id="skills-save" class="btn btn-save">保存</button><button type="button" id="skills-cancel" class="btn btn-load">取消</button>
+  </div>
+</div>
+<script defer src="{{ url_for('static', filename='skills_panel.js') }}"></script>
