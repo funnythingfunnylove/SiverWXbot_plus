@@ -57,8 +57,8 @@ def validate_server(data, previous=None):
         data = dict(data)
         data["url"] = HRZH_URL
         chat = data.get("chat", "")
-        if not isinstance(chat, str) or not chat.strip() or len(chat) > 256:
-            raise ValueError("请填写准确的微信私聊窗口名称")
+        if not isinstance(chat, str) or len(chat) > 256:
+            raise ValueError("账户备注不能超过 256 字")
         key = data.get("key")
         if key is not None:
             if not isinstance(key, str) or not re.fullmatch(r"[!-~]{1,8192}", key):
@@ -68,7 +68,7 @@ def validate_server(data, previous=None):
             data["headers"] = previous.get("headers", {})
         if not data["headers"].get("Authorization"):
             raise ValueError("请填写用户 Key")
-        data["allowed_chats"] = [chat.strip()]
+        data["allowed_chats"] = [chat.strip()] if chat.strip() else []
         data["allowed_groups"] = []
     name = data.get("name", "")
     url = data.get("url", "")
@@ -114,7 +114,7 @@ def permits(server, context):
     if context.get("is_group"):
         return (context.get("chat") in server.get("allowed_groups", [])
                 and context.get("mentioned") is True)
-    return context.get("chat") in server.get("allowed_chats", [])
+    return bool(context.get("chat"))
 
 
 class MCPConfigStore:
@@ -185,11 +185,6 @@ class MCPConfigStore:
             server = self.draft(data)
             current = self.read()
             servers = current["servers"]
-            if server["kind"] == "hrzh_person" and any(
-                s.get("kind") == "hrzh_person" and s["id"] != server["id"]
-                and s["allowed_chats"] == server["allowed_chats"] for s in servers
-            ):
-                raise ValueError("该微信用户已配置个人 Key，请编辑已有用户")
             for index, old in enumerate(servers):
                 if old["id"] == server["id"]:
                     servers[index] = server

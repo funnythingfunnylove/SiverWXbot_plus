@@ -19,7 +19,7 @@ python integrations/tianyancha_mcp/server.py --transport streamable-http
 2. 登录天眼查网站。点击扩展图标，打开桥接页面。
 3. 从本机文件 `integrations/tianyancha_mcp/.bridge-token` 读取首次启动生成的配对令牌，填入扩展并点击连接。保留桥接页，关闭后需重新配对。令牌不要填写到 Skill 或聊天中。
 4. 重启更新后的 `web_server.py`。后台「MCP 工具」点击“添加天眼查网页 MCP”，测试连接并获取工具。
-5. 勾选所需工具，填写授权私聊或群聊，启用服务、保存并打开 MCP 总开关。建议单次超时 60 秒。
+5. 勾选所需工具，私聊自动开放，需要群聊时填写群名单，启用服务、保存并打开 MCP 总开关。建议单次超时 60 秒。
 6. 在授权会话中查询企业；群聊需 @ 机器人。先搜索候选，再用返回的企业 ID 核验工商资料。
 
 连接测试只做 MCP 初始化和工具发现，不证明扩展在线或网页登录有效。`tyc_get_access_status` 检查扩展心跳，实际查询才能检查页面可访问性。

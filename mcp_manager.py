@@ -27,12 +27,16 @@ def safe_error(exc):
     """Never expose exception bodies, URLs, tokens or model request contents."""
     if isinstance(exc, MCPError):
         return str(exc)
+    if type(exc).__name__ == 'APITimeoutError':
+        return "模型响应超时，请检查模型网关负载或增加对话等待时间；这不是私聊权限拒绝"
     if isinstance(exc, (TimeoutError, asyncio.TimeoutError)):
         return "MCP 请求超时；操作可能已执行，请先核对结果，勿直接重复操作"
     children = getattr(exc, "exceptions", ())
     if children:
         return safe_error(children[0])
     status = getattr(getattr(exc, "response", None), "status_code", None)
+    if status == 403:
+        return "请求被服务端拒绝（HTTP 403），请核对该阶段的服务 Key、账号权限或网关访问策略；不是微信私聊白名单拒绝"
     if status:
         return f"MCP/模型请求失败（HTTP {status}），请检查地址、认证和接口能力"
     if isinstance(exc, ImportError):
@@ -210,11 +214,8 @@ class MCPManager:
     def eligible(self, context):
         config = self.store.read()
         servers = config["servers"]
-        personal = not (context or {}).get("is_group") and any(
-            s.get("kind") == "hrzh_person" and (context or {}).get("chat") in s["allowed_chats"] for s in servers)
         return config, [s for s in servers if config["enabled"] and permits(s, context) and s["allowed_tools"]
-                        and (not (context or {}).get("reminder_run") or s.get("kind") == "hrzh_person")
-                        and not (personal and s.get("kind") != "hrzh_person" and s["url"].rstrip('/') == HRZH_URL)]
+                        and (not (context or {}).get("reminder_run") or s.get("kind") == "hrzh_person")]
 
     def test(self, server):
         async def discover():
@@ -242,7 +243,7 @@ class MCPManager:
     def reply(self, client, model, messages, context):
         config, servers = self.eligible(context)
         if not servers and context.get("reminder_run"):
-            return "定时查询未执行：本人 MCP Key 或工具权限未启用，请检查 MCP 配置。"
+            return "定时查询未执行：共享 MCP 服务或工具未启用，请检查 MCP 配置。"
         if not servers and not self.reminder_access(context):
             return None  # Preserve ordinary AI behavior when MCP is not in scope.
         async def run():
@@ -250,14 +251,14 @@ class MCPManager:
             async with AsyncOpenAI(api_key=client.api_key, base_url=str(client.base_url),
                                    default_headers=dict(client.default_headers),
                                    organization=client.organization, project=client.project,
-                                   timeout=30, max_retries=0) as ai:
+                                   timeout=config["total_timeout"], max_retries=0) as ai:
                 return await self.converse(ai.responses.create, model, messages, context, config, servers)
         try:
             return self.submit(run, config["total_timeout"])
         except Exception as exc:
             self.log("WARNING", safe_error(exc))
             # Return an explicit failure without replaying tools or switching protocols.
-            hint = "如已设置提醒，请发送“查看我的提醒”核对，避免重复创建。" if self.reminder_access(context) else "如涉及修改，请先核对实际结果。"
+            hint = "如本次涉及写入或创建提醒，请先核对结果，避免重复操作。"
             return "本次工具对话未完成。" + safe_error(exc) + "。" + hint
 
     def _still_allowed(self, original, name, context):
@@ -298,20 +299,18 @@ class MCPManager:
                     routes[tool.name] = (local, session, tool)
                     definitions.append({"type": "function", "strict": False, "name": tool.name,
                                         "description": tool.description, "parameters": tool.inputSchema})
-            # Fail explicitly if an enabled, authorized server cannot be discovered.
-            # Silently dropping it would encourage an answer without required data.
+            # Isolate outages and explicitly report missing capabilities. A broken
+            # unrelated service must not block tools that are still available.
             for server in servers:
                 try:
                     session = await stack.enter_async_context(self.connector(server))
                     discovered, _ = await personal_tools(session, server)
                 except Exception as exc:
-                    error = stage_error("MCP 连接/工具发现阶段", exc)
-                    if not self.reminder_access(context):
-                        raise error from exc
-                    # An unavailable external MCP must not prevent cancelling local reminders.
+                    error = stage_error(f"MCP 服务「{server['name']}」连接/工具发现阶段", exc)
+                    self.log("WARNING", str(error))
                     discovery_errors.append(str(error))
                     transcript.append({"role": "system", "content":
-                        "一个外部 MCP 服务当前不可用，不能提供该服务的业务查询结果；"
+                        "以下 MCP 服务当前不可用，不能提供该服务的业务查询结果；可以使用其他正常服务。"
                         "本地提醒仍可创建、查看和取消。失败信息：" + str(error)})
                     continue
                 self.log("INFO", f"MCP 工具发现成功：{server['name']}，共 {len(discovered)} 个工具")
@@ -328,6 +327,8 @@ class MCPManager:
                         "name": alias, "description": f"{server['name']} / {tool.name}: {tool.description or ''}"[:2000],
                         "parameters": tool.inputSchema,
                     })
+            if not definitions and discovery_errors:
+                raise MCPError("外部 MCP 暂不可用：" + "；".join(discovery_errors))
             if not definitions:
                 raise MCPError("授权工具在服务中不存在，请在面板重新获取并选择工具")
             if len(definitions) > 128:
@@ -352,10 +353,10 @@ class MCPManager:
                     text = response_text(response)
                     if text:
                         if discovery_errors:
-                            notice = "外部 MCP 暂不可用：" + discovery_errors[0]
-                            return (text + "\n" + notice) if successful_reminders else notice
+                            notice = "外部 MCP 暂不可用：" + "；".join(discovery_errors)
+                            return (text + "\n" + notice) if successful_reminders or successful_queries else notice
                         if context.get("reminder_run") and not successful_queries:
-                            return "定时查询未获得有效工具结果，请检查个人 Key、查询工具权限或稍后在私聊中查询。"
+                            return "定时查询未获得有效工具结果，请检查共享 Key、查询工具权限或稍后在私聊中查询。"
                         return text
                     raise MCPError("模型返回空消息，请确认接口支持工具调用")
                 if final_round:
@@ -398,7 +399,7 @@ class MCPManager:
                                         self.log("INFO", f"MCP 工具返回 {'失败' if result.isError else '成功'}：{server['name']} / {tool.name}")
                                     except Exception as exc:
                                         failed_servers.add(server["id"])
-                                        error = str(stage_error("MCP 工具执行阶段", exc))
+                                        error = str(stage_error(f"MCP 服务「{server['name']}」工具 {tool.name} 执行阶段", exc))
                                         self.log("WARNING", error)
                                         result_text = json.dumps({"is_error": True, "content": error}, ensure_ascii=False)
                                     completed[signature] = result_text

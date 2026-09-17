@@ -69,9 +69,9 @@
     el('mcp-service-permissions').hidden = personal;
     el('mcp-person-chat').value = (server.allowed_chats || [])[0] || '';
     el('mcp-person-key').value = '';
-    el('mcp-person-hint').textContent = server.has_headers ? '已保存 Key，留空保留，填写新 Key 替换。仅用于此用户的私聊。' : 'Key 保存在本机，不回显、不发送给模型。一个微信用户只绑定一个个人 Key。';
+    el('mcp-person-hint').textContent = server.has_headers ? '已保存 Key，留空保留，填写新 Key 替换。用于全部私聊。' : 'Key 保存在本机，不回显、不发送给模型。此账户的所选工具对全部私聊开放。';
     el('mcp-editor').hidden = false;
-    el('mcp-editor-title').textContent = personal ? '配置项目管理用户' : (editingId ? '编辑 MCP 服务' : '添加 MCP 服务');
+    el('mcp-editor-title').textContent = personal ? '配置项目管理共享账户' : (editingId ? '编辑 MCP 服务' : '添加 MCP 服务');
     for (const [field, value] of Object.entries({name: server.name || '', url: server.url || '', headers: '', timeout: server.timeout || 20,
       chats: (server.allowed_chats || []).join('\n'), groups: (server.allowed_groups || []).join('\n')})) el(`mcp-${field}`).value = value;
     el('mcp-clear-headers').checked = false;
@@ -113,8 +113,8 @@
     for (const server of servers) {
       const row = document.createElement('div'); row.style.cssText = 'display:flex;gap:12px;flex-wrap:wrap;align-items:center;padding:12px 0;border-bottom:1px solid var(--border);';
       const text = document.createElement('span'); text.style.cssText = 'flex:1;min-width:160px;overflow-wrap:anywhere;';
-      text.textContent = `${server.name} · ${server.enabled ? '已启用' : '已停用'} · ${server.allowed_tools.length} 个工具 · ${server.allowed_chats.length} 个私聊 / ${server.allowed_groups.length} 个群`;
-      if (server.kind === 'hrzh_person') text.textContent = `${server.name} · 项目管理用户：${server.allowed_chats[0]} · ${server.enabled ? '已启用' : '已停用'} · ${server.allowed_tools.length} 个工具 · ${server.has_headers ? 'Key 已配置' : '未配置 Key'}`;
+      text.textContent = `${server.name} · ${server.enabled ? '已启用' : '已停用'} · ${server.allowed_tools.length} 个工具 · 全部私聊 / ${server.allowed_groups.length} 个群`;
+      if (server.kind === 'hrzh_person') text.textContent = `${server.name} · 项目管理共享账户 · ${server.enabled ? '已启用' : '已停用'} · ${server.allowed_tools.length} 个工具 · ${server.has_headers ? 'Key 已配置' : '未配置 Key'}`;
       if (server.migration_notice) text.textContent += ' · ' + server.migration_notice;
       const change = document.createElement('button'); change.type = 'button'; change.className = 'btn btn-load'; change.textContent = '编辑'; change.onclick = () => edit(server);
       const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'btn btn-load'; remove.textContent = '删除';
@@ -156,12 +156,12 @@
   });
   el('mcp-save-server').onclick = () => action(async () => {
     const data = draft();
-    if (data.enabled && (!data.allowed_tools.length || !(data.allowed_chats.length || data.allowed_groups.length))) {
-      throw new Error('启用服务前，请选择工具并填写至少一个完整的授权会话。');
+    if (data.enabled && !data.allowed_tools.length) {
+      throw new Error('启用服务前，请选择允许调用的工具；所有私聊均可使用。');
     }
     await request('servers', 'POST', data);
     el('mcp-headers').value = ''; el('mcp-person-key').value = ''; el('mcp-editor').hidden = true; revision++;
-    await load(); status('MCP 服务已保存。请确认总开关已启用，并在授权会话中测试。');
+    await load(); status('MCP 服务已保存。请确认总开关已启用，并在任一已监听且开启 AI 回复的私聊中测试。');
   });
   action(load);
 })();

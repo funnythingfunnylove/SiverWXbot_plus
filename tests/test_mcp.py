@@ -55,7 +55,7 @@ def test_invalid_config_rejected(store, change):
 
 def test_permission_defaults_and_groups(configured):
     assert permits(configured, CONTEXT)
-    assert not permits(configured, {**CONTEXT, "chat": "Mallory"})
+    assert permits(configured, {**CONTEXT, "chat": "Mallory"})
     assert permits(configured, {"chat": "Project", "is_group": True, "sender": "Mallory", "mentioned": True})
     assert not permits(configured, {"chat": "Project", "is_group": True, "sender": "Alice", "mentioned": False})
     assert not permits(configured, {"chat": "Other", "is_group": True, "sender": "Alice", "mentioned": True})
@@ -109,8 +109,8 @@ def test_unauthorized_or_invalid_tool_never_executes(manager, store, configured,
     assert live_mcp.calls == []
 
 
-def test_unrelated_chat_uses_ordinary_model(manager, configured):
-    assert manager.reply(None, "model", [], {**CONTEXT, "chat": "someone else"}) is None
+def test_unknown_group_uses_ordinary_model(manager, configured):
+    assert manager.reply(None, "model", [], {**CONTEXT, "chat": "Other", "is_group": True, "mentioned": True}) is None
 
 
 def test_tool_error_blocks_further_server_calls(manager, configured, live_mcp):
@@ -244,8 +244,7 @@ def test_person_config_isolated_and_redacted(store):
     assert store.read()["servers"][0]["headers"] == saved["headers"]
     store.save({**update, "key": "fixture-new"})
     assert store.read()["servers"][0]["headers"] == {"Authorization": "Bearer fixture-new"}
-    with pytest.raises(ValueError, match="已配置"):
-        store.save(person())
+    store.save(person())  # Shared accounts are not unique per contact.
     with pytest.raises(ValueError):
         store.save(person(key="bad\nkey"))
     with pytest.raises(ValueError):
@@ -254,7 +253,7 @@ def test_person_config_isolated_and_redacted(store):
 
 
 @pytest.mark.parametrize("state", ["enabled", "disabled", "empty"])
-def test_person_prevents_shared_private_fallback(store, manager, state):
+def test_shared_accounts_are_identical_for_all_private_chats(store, manager, state):
     from mcp_config import HRZH_URL
     shared = store.save(dict(name="shared", url=HRZH_URL, enabled=True,
                              allowed_chats=["Alice", "Bob"], allowed_groups=["Project"],
@@ -266,8 +265,8 @@ def test_person_prevents_shared_private_fallback(store, manager, state):
         data["allowed_tools"] = []
     personal = store.save(data)
     store.settings({"enabled": True})
-    assert [s["id"] for s in manager.eligible(CONTEXT)[1]] == ([personal] if state == "enabled" else [])
-    assert [s["id"] for s in manager.eligible({**CONTEXT, "chat": "Bob"})[1]] == [shared]
+    assert [s["id"] for s in manager.eligible(CONTEXT)[1]] == ([shared, personal] if state == "enabled" else [shared])
+    assert [s["id"] for s in manager.eligible({**CONTEXT, "chat": "Bob"})[1]] == ([shared, personal] if state == "enabled" else [shared])
     assert [s["id"] for s in manager.eligible(dict(chat="Project", is_group=True, mentioned=True))[1]] == [shared]
 
 
@@ -307,16 +306,17 @@ def test_person_keys_and_permissions_in_conversation(store):
         for chat, expected in [("Alice", "add"), ("Bob", "private")]:
             context = {**CONTEXT, "chat": chat}
             config, servers = manager.eligible(context)
-            checked = manager.test_person(servers[0])
+            selected = servers[0] if chat == "Alice" else servers[1]
+            checked = manager.test_person(selected)
             assert [t["name"] for t in checked["tools"]] == [expected]
             assert "key_id" not in json.dumps(checked)
             count = 0
             async def create(**kwargs):
                 nonlocal count
                 count += 1
-                assert [t["name"] for t in kwargs["tools"]] == [tool_name(servers[0]["id"], expected)]
+                assert {t["name"] for t in kwargs["tools"]} == {tool_name(servers[0]["id"], "add"), tool_name(servers[1]["id"], "private")}
                 assert "fixture-" not in json.dumps(kwargs)
-                return response(calls=[call(tool_name(servers[0]["id"], expected), {})]) if count == 1 else response("完成")
+                return response(calls=[call(tool_name(selected["id"], expected), {})]) if count == 1 else response("完成")
             assert manager.submit(lambda: manager.converse(create, "model", [], context, config, servers), 10) == "完成"
         assert ("Bearer fixture-A", "private") not in events
         assert ("Bearer fixture-B", "add") not in events
@@ -468,3 +468,45 @@ def test_structured_website_result_deduplicates_and_keeps_coverage():
     small = {'schema_version': 2, 'status': 'no_records'}
     result = CallToolResult(content=[TextContent(type='text', text=json.dumps(small))], structuredContent=small)
     assert json.loads(json.loads(format_result(result))['content']) == small
+
+
+def test_all_private_chats_share_enabled_services(configured, manager):
+    for name in ['Alice', 'Bob', '新同事']:
+        assert [s['id'] for s in manager.eligible({**CONTEXT, 'chat': name})[1]] == [configured['id']]
+
+
+def test_model_timeout_has_actionable_chinese_message():
+    import httpx
+    from openai import APITimeoutError
+    message = safe_error(APITimeoutError(request=httpx.Request('POST', 'https://fixture.invalid/responses')))
+    assert '超时' in message and 'APITimeoutError' not in message
+
+
+def test_one_failed_service_does_not_block_healthy_query(store):
+    @asynccontextmanager
+    async def connector(server):
+        if server['name'] == 'bad':
+            import httpx
+            raise httpx.HTTPStatusError('secret', request=httpx.Request('GET','https://fixture.invalid'),
+                                       response=httpx.Response(403))
+        async def list_tools(**kwargs):
+            return ListToolsResult(tools=[Tool(name='read', inputSchema={'type':'object'})])
+        async def call_tool(*args):
+            return CallToolResult(content=[TextContent(type='text',text='已取得企业资料')])
+        yield SimpleNamespace(list_tools=list_tools,call_tool=call_tool)
+    ids=[]
+    for name in ['bad','good']:
+        ids.append(store.save({'name':name,'url':'http://localhost/mcp','enabled':True,'allowed_tools':['read'], 'allowed_chats':['Alice']}))
+    store.settings({'enabled':True})
+    manager=MCPManager(store,connector=connector)
+    config,servers=manager.eligible(CONTEXT)
+    count=0
+    async def model(**kwargs):
+        nonlocal count
+        count+=1
+        return response(calls=[call(tool_name(ids[1],'read'),{})]) if count==1 else response('已取得企业资料')
+    try:
+        result=manager.submit(lambda:manager.converse(model,'model',[],CONTEXT,config,servers),10)
+        assert '已取得企业资料' in result and '403' in result and 'bad' in result
+    finally:
+        manager.close()

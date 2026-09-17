@@ -9,8 +9,8 @@
 <div class="config-panel" id="tab-mcp">
   <div class="cfg-card">
     <div class="cfg-card-header"><i class="bi bi-tools"></i><h5>MCP 对话工具</h5><span class="desc">让机器人查询外部信息、执行授权操作</span></div>
-    <p class="cfg-hint">使用「OpenAI API 格式兼容接口」且模型支持 Responses 工具调用时生效（仅使用 /responses）。先添加服务、获取工具，再选择工具和授权会话。请使用本页的「保存总设置」和「保存服务」按钮；MCP 设置保存后下次对话生效，无需重启机器人。</p>
-    <p class="cfg-hint">私聊主动提醒：在已监听且开启 AI 回复的私聊中说“10 分钟后提醒我开会”“每天 9 点提醒我签到”“查看我的提醒”或“取消提醒 ID”。使用北京时间（UTC+08:00），支持一次性、每天、每周；机器人和微信需保持运行。固定提醒不依赖 MCP 总开关，定时项目查询需配置个人 Key 和只读工具。</p>
+    <p class="cfg-hint">使用「OpenAI API 格式兼容接口」且模型支持 Responses 工具调用时生效（仅使用 /responses）。先添加服务、获取工具，再选择工具；所有私聊开放，群聊按名单开放。请使用本页的「保存总设置」和「保存服务」按钮；MCP 设置保存后下次对话生效，无需重启机器人。</p>
+    <p class="cfg-hint">私聊主动提醒：在已监听且开启 AI 回复的私聊中说“10 分钟后提醒我开会”“每天 9 点提醒我签到”“查看我的提醒”或“取消提醒 ID”。使用北京时间（UTC+08:00），支持一次性、每天、每周；机器人和微信需保持运行。固定提醒不依赖 MCP 总开关，定时项目查询需配置共享项目管理 Key 和只读工具。</p>
     <div class="switch-row"><input class="form-check-input" type="checkbox" id="mcp-enabled"><label for="mcp-enabled">启用 MCP 对话工具</label></div>
     <div class="row">
       <div class="col-md-6 mb-3"><label class="cfg-label" for="mcp-rounds">每条消息最大工具轮数</label><input class="form-control" type="number" id="mcp-rounds" min="1" max="8" value="6"></div>
@@ -22,8 +22,8 @@
   <div class="cfg-card">
     <div class="cfg-card-header"><i class="bi bi-plug"></i><h5>已添加的服务</h5></div>
     <div id="mcp-servers" class="mb-3">正在加载…</div>
-    <p class="cfg-hint">内置项目管理系统 https://hrzh.cc/mcp：每个微信私聊用户绑定自己的 Key，按该 Key 的实际权限获取工具。</p>
-    <button type="button" class="btn btn-save" id="mcp-add-person">添加项目管理用户</button>
+    <p class="cfg-hint">内置项目管理系统 https://hrzh.cc/mcp：账户 Key 作为共享服务使用，全部私聊均可调用所选工具；实际业务身份和权限由服务端 Key 决定。</p>
+    <button type="button" class="btn btn-save" id="mcp-add-person">添加项目管理共享账户</button>
     <button type="button" class="btn btn-save" id="mcp-add-tyc">添加天眼查网页 MCP</button>
     <button type="button" class="btn btn-load" id="mcp-add">添加 MCP 服务</button>
   </div>
@@ -32,8 +32,8 @@
     <div class="mb-3"><label class="cfg-label" for="mcp-name">服务名称</label><input class="form-control" id="mcp-name" maxlength="80" placeholder="例如：项目进度查询"></div>
     <div id="mcp-tyc-fields" hidden><p class="cfg-hint">通过本机 Chrome 登录网页读取数据，无需天眼 AI 密钥。先启动独立网页 MCP 服务并连接浏览器扩展，默认地址 http://127.0.0.1:18766/mcp。测试连接只发现工具，不代表网页已登录。安装步骤见 docs/company-query.md。自定义端口可用“添加 MCP 服务”。</p></div>
     <div id="mcp-person-fields" hidden>
-      <div class="mb-3"><label class="cfg-label" for="mcp-person-chat">授权微信用户（私聊窗口全名）</label><input class="form-control" id="mcp-person-chat" maxlength="256" placeholder="需与监听窗口名称完全一致"></div>
-      <div class="mb-3"><label class="cfg-label" for="mcp-person-key">该用户的项目管理 Key</label><input class="form-control" type="password" id="mcp-person-key" autocomplete="new-password" spellcheck="false" placeholder="只填写 Key，不带 Bearer 前缀"><p class="cfg-hint" id="mcp-person-hint"></p></div>
+      <div class="mb-3"><label class="cfg-label" for="mcp-person-chat">账户备注（可选）</label><input class="form-control" id="mcp-person-chat" maxlength="256" placeholder="例如：公司共享账号"></div>
+      <div class="mb-3"><label class="cfg-label" for="mcp-person-key">共享项目管理 Key</label><input class="form-control" type="password" id="mcp-person-key" autocomplete="new-password" spellcheck="false" placeholder="只填写 Key，不带 Bearer 前缀"><p class="cfg-hint" id="mcp-person-hint"></p></div>
     </div>
     <div id="mcp-service-fields">
     <div class="mb-3"><label class="cfg-label" for="mcp-url">MCP 地址（Streamable HTTP）</label><input class="form-control" type="url" id="mcp-url" placeholder="https://example.com/mcp"><div class="cfg-hint">填写 MCP 端点，不是普通网页或 REST API。可连接这台 Windows 电脑能访问的内网地址；本版不支持 stdio、旧 SSE 或交互式 OAuth 登录。</div></div>
@@ -42,10 +42,10 @@
     <div class="mb-3"><label class="cfg-label" for="mcp-timeout">单次服务请求超时（秒）</label><input class="form-control" type="number" id="mcp-timeout" min="5" max="60" value="20"></div>
     <button type="button" class="btn btn-load mb-3" id="mcp-test">测试连接并获取工具</button>
     <p id="mcp-test-status" role="status" aria-live="polite" style="white-space:pre-wrap;"></p>
-    <div class="mb-3"><span class="cfg-label">允许调用的工具</span><p class="cfg-hint">普通服务测试只获取工具列表；项目管理用户测试还会调用只读 weekly_identity 核验人员与工具权限。勾选即授权机器人在下方会话中自动调用；写入、删除和通知类工具也会真实执行，请只开放你允许的操作。“只读”标记来自服务声明，仍需核对工具用途。</p><div id="mcp-tools" style="max-height:360px;overflow:auto;border:1px solid var(--border);border-radius:6px;padding:12px;"></div></div>
+    <div class="mb-3"><span class="cfg-label">允许调用的工具</span><p class="cfg-hint">普通服务测试只获取工具列表；项目管理用户测试还会调用只读 weekly_identity 核验人员与工具权限。勾选即授权机器人在全部私聊及下方已授权群聊中自动调用；写入、删除和通知类工具也会真实执行，请只开放你允许的操作。“只读”标记来自服务声明，仍需核对工具用途。</p><div id="mcp-tools" style="max-height:360px;overflow:auto;border:1px solid var(--border);border-radius:6px;padding:12px;"></div></div>
     <div id="mcp-service-permissions">
     <div class="row">
-      <div class="col-md-6 mb-3"><label class="cfg-label" for="mcp-chats">允许使用的私聊（每行一个）</label><textarea class="form-control" id="mcp-chats" rows="4" placeholder="微信监听窗口名称，需完全一致"></textarea></div>
+      <div class="col-md-6 mb-3"><label class="cfg-label" for="mcp-chats">私聊访问范围</label><p class="cfg-hint">全部私聊均可使用已启用服务的所选工具，无需设置联系人白名单。旧名单不再限制访问。仍需开启监听和 AI 回复。</p><textarea id="mcp-chats" hidden></textarea></div>
       <div class="col-md-6 mb-3"><label class="cfg-label" for="mcp-groups">允许使用的群聊（每行一个）</label><textarea class="form-control" id="mcp-groups" rows="4" placeholder="群名，需完全一致"></textarea></div>
     </div>
     <p class="cfg-hint">添加授权群后，群内所有成员 @ 机器人即可使用所选工具，无需添加人员名单。未 @ 的群消息不调用 MCP；仍需开启该群的监听与 AI 回复。</p>

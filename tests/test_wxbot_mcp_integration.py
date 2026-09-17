@@ -97,19 +97,18 @@ def test_bot_message_to_mcp_to_wechat_send(modules, manager, configured, live_mc
         assert sent == ["查询结果：2 + 3 = 5"]
         assert live_mcp.calls == [(2, 3)]
         assert len(live_model.requests) == 2
-        # Unauthorized sender/chat retains the original model path without tools.
+        # All private chats share MCP; unmentioned group messages stay ordinary.
         message.sender = "Bob"
         message.content = "没有提及机器人的普通消息"
         if not is_group:
             chat.who = "Bob"
         bot.process_message(chat, message)
-        assert sent[-1] == "普通聊天回复"
-        assert live_mcp.calls == [(2, 3)]
+        assert sent[-1] == ("普通聊天回复" if is_group else "查询结果：2 + 3 = 5")
+        assert live_mcp.calls == ([(2, 3)] if is_group else [(2, 3), (2, 3)])
         if is_group:
             assert "tools" not in live_model.requests[-1]
         else:
-            assert {t["name"] for t in live_model.requests[-1]["tools"]} == {
-                "reminder_create", "reminder_list", "reminder_cancel"}
+            assert any(t["name"].startswith("mcp_") for t in live_model.requests[-1]["tools"])
     finally:
         bot.api.client.close()
 
